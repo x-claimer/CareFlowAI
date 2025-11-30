@@ -71,13 +71,13 @@ export function Footer() {
 
         <div className="border-t border-gray-800/50 mt-10 pt-8 text-center">
           <p className="text-gray-500 text-sm flex items-center justify-center gap-2">
-            <Heart className="w-4 h-4 text-red-400 animate-pulse" />
+            {/* <Heart className="w-4 h-4 text-red-400 animate-pulse" /> */}
             <span>© 2024 CareFlowAI. All rights reserved.</span>
-            <span className="mx-2">|</span>
+            {/* <span className="mx-2">|</span>
             <span className="text-green-400 flex items-center gap-1">
               <Shield className="w-4 h-4" />
               HIPAA Compliant
-            </span>
+            </span> */}
           </p>
         </div>
       </div>

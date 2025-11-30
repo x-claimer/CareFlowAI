@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+  namespace: careflowai
+  labels:
+    app: backend
+    tier: api
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8000
+    targetPort: 8000
+    protocol: TCP
+    name: http
+  selector:
+    app: backend
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800

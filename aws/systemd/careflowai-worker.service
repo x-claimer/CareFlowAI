@@ -1,0 +1,17 @@
+[Unit]
+Description=CareFlowAI Celery Worker (For AI Processing - Optional)
+After=network.target redis-server.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/careflowai/backend
+Environment="PATH=/opt/careflowai/backend/venv/bin"
+ExecStart=/opt/careflowai/backend/venv/bin/celery -A app.worker.celery_app worker --loglevel=info
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

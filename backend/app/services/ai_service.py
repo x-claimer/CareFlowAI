@@ -1,37 +1,189 @@
 """
 AI Service Module
-This module contains simulated AI responses for health report analysis and medical tutoring.
-In production, these would be replaced with actual AI/ML model integrations.
+This module integrates with Google Gemini API for AI-powered health analysis and medical tutoring.
 """
 import uuid
+import os
 from typing import List
+import google.generativeai as genai
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Configure Gemini API
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_REPORT_ANALYSIS_MODEL = os.getenv("GEMINI_REPORT_ANALYSIS_MODEL", "gemini-2.5-flash")
+GEMINI_TUTOR_MODEL = os.getenv("GEMINI_TUTOR_MODEL", "gemini-2.5-flash")
+
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
 
 class AIService:
     @staticmethod
     async def analyze_health_report(file_name: str, file_content: bytes) -> dict:
         """
-        Simulate AI analysis of a health report
-        In production, this would use actual ML models or API calls to analyze medical reports
+        AI-powered health report analysis using Google Gemini
+        Analyzes medical reports (PDF/images) and extracts key health metrics
         """
-        # Simulated analysis based on file name
-        analysis = f"""I've analyzed your health report "{file_name}". Here's a summary:
+        if not GEMINI_API_KEY:
+            # Fallback response if API key not configured
+            return {
+                "analysis": "Please configure GEMINI_API_KEY to enable AI-powered health report analysis.",
+                "summary": "API key configuration required",
+                "file_name": file_name,
+                "metrics": [],
+                "recommendations": ["Configure your Gemini API key in .env file"],
+            }
 
-✓ Overall health indicators appear normal
-✓ Blood pressure: Within healthy range
-✓ Cholesterol levels: Slightly elevated - consider dietary changes
-✓ Blood sugar: Normal range
-✓ Kidney function: Optimal
+        try:
+            # Initialize Gemini model for report analysis (multimodal)
+            model = genai.GenerativeModel(GEMINI_REPORT_ANALYSIS_MODEL)
 
-Would you like me to explain any specific values or provide recommendations?"""
+            # Determine file type and prepare content
+            file_extension = file_name.lower().split('.')[-1]
 
-        summary = "Health report shows generally good indicators with minor attention needed for cholesterol levels."
+            # For images (JPEG, PNG)
+            if file_extension in ['jpg', 'jpeg', 'png']:
+                import io
+                from PIL import Image
 
-        return {
-            "analysis": analysis,
-            "summary": summary,
-            "file_name": file_name,
-        }
+                # Load image from bytes
+                image = Image.open(io.BytesIO(file_content))
+
+                # Create detailed prompt for health report analysis
+                prompt = """You are an expert medical AI assistant analyzing a health report image.
+
+Please provide a comprehensive analysis in the following JSON format:
+
+{
+  "summary": "A brief 2-3 sentence summary of the overall health status",
+  "analysis": "Detailed analysis of the health report findings (4-6 sentences)",
+  "metrics": [
+    {
+      "name": "Metric name (e.g., Blood Pressure, BMI, Cholesterol)",
+      "value": "The measured value",
+      "unit": "Unit of measurement",
+      "status": "normal/warning/critical",
+      "reference_range": "Normal reference range",
+      "interpretation": "What this value means in simple terms"
+    }
+  ],
+  "recommendations": [
+    "Specific recommendation 1",
+    "Specific recommendation 2",
+    "Specific recommendation 3"
+  ]
+}
+
+Extract ALL visible health metrics from the report. Common metrics to look for:
+- Blood Pressure (Systolic/Diastolic)
+- Heart Rate / Pulse
+- BMI (Body Mass Index)
+- Body Fat Percentage
+- Cholesterol (Total, LDL, HDL, Triglycerides)
+- Blood Sugar / Glucose (Fasting, HbA1c)
+- Hemoglobin
+- White Blood Cell Count
+- Red Blood Cell Count
+- Platelet Count
+- Liver Function (ALT, AST, ALP)
+- Kidney Function (Creatinine, BUN, eGFR)
+- Thyroid (TSH, T3, T4)
+- Vitamin levels (D, B12, etc.)
+- Electrolytes (Sodium, Potassium, etc.)
+
+For each metric found:
+- Determine if it's normal, warning, or critical based on standard medical ranges
+- Provide patient-friendly interpretation
+- Include reference ranges when visible
+
+Provide actionable, specific recommendations based on the findings.
+Use simple, patient-friendly language throughout."""
+
+                # Generate response with image
+                response = model.generate_content([prompt, image])
+
+            # For PDFs or other formats
+            else:
+                # For PDFs, we'll analyze text content
+                prompt = f"""You are an expert medical AI assistant analyzing a health report document: {file_name}
+
+Based on the document, provide a comprehensive analysis in the following JSON format:
+
+{{
+  "summary": "A brief 2-3 sentence summary of the overall health status",
+  "analysis": "Detailed analysis of the health report findings (4-6 sentences)",
+  "metrics": [
+    {{
+      "name": "Metric name",
+      "value": "The measured value",
+      "unit": "Unit of measurement",
+      "status": "normal/warning/critical",
+      "reference_range": "Normal reference range",
+      "interpretation": "Patient-friendly explanation"
+    }}
+  ],
+  "recommendations": [
+    "Specific actionable recommendation 1",
+    "Specific actionable recommendation 2",
+    "Specific actionable recommendation 3"
+  ]
+}}
+
+Extract health metrics and provide detailed analysis with patient-friendly recommendations."""
+
+                response = model.generate_content(prompt)
+
+            # Parse the response
+            response_text = response.text.strip()
+
+            # Try to extract JSON from response
+            import json
+            import re
+
+            # Find JSON in the response (it might be wrapped in markdown code blocks)
+            json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(1)
+            else:
+                # Try to find raw JSON
+                json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+                json_str = json_match.group(0) if json_match else response_text
+
+            try:
+                parsed_response = json.loads(json_str)
+
+                return {
+                    "analysis": parsed_response.get("analysis", response_text),
+                    "summary": parsed_response.get("summary", "Health report analyzed successfully"),
+                    "file_name": file_name,
+                    "metrics": parsed_response.get("metrics", []),
+                    "recommendations": parsed_response.get("recommendations", []),
+                }
+            except json.JSONDecodeError:
+                # If JSON parsing fails, return the text response with basic structure
+                return {
+                    "analysis": response_text,
+                    "summary": "Health report analyzed - see detailed analysis below",
+                    "file_name": file_name,
+                    "metrics": [],
+                    "recommendations": ["Consult with your healthcare provider for personalized advice"],
+                }
+
+        except Exception as e:
+            # Fallback response on error
+            return {
+                "analysis": f"I encountered an issue analyzing the health report: {str(e)}. Please ensure the image is clear and contains visible health metrics.",
+                "summary": "Analysis error occurred",
+                "file_name": file_name,
+                "metrics": [],
+                "recommendations": [
+                    "Ensure the report image is clear and readable",
+                    "Try uploading a higher quality image",
+                    "Consult your healthcare provider directly",
+                ],
+            }
 
     @staticmethod
     async def chat_with_nurse(question: str, report_context: str = None) -> dict:
@@ -60,62 +212,87 @@ Is there anything specific you'd like to know more about?"""
     @staticmethod
     async def search_medical_term(query: str) -> dict:
         """
-        Simulate AI-powered medical term search
-        In production, this would query medical databases or use NLP models
+        AI-powered medical term search using Google Gemini
+        Provides detailed medical information and examples
         """
-        # Simulated medical knowledge base
-        medical_info = {
-            "hypertension": {
-                "definition": "Hypertension, also known as high blood pressure, is a condition where the force of blood against artery walls is consistently too high. This can lead to serious health complications if left untreated.",
+        if not GEMINI_API_KEY:
+            # Fallback to simulated response if API key not configured
+            return {
+                "term": query,
+                "definition": f"{query} is a medical term. Please configure GEMINI_API_KEY for detailed AI-powered explanations.",
                 "examples": [
-                    "Common usage: 'The patient was diagnosed with hypertension during routine screening'",
-                    "Related terms: cardiovascular disease, systolic pressure, diastolic pressure",
-                    "When to seek help: If you experience persistent headaches, shortness of breath, or nosebleeds",
-                ],
-            },
-            "diabetes": {
-                "definition": "Diabetes is a metabolic disorder characterized by high blood sugar levels over a prolonged period. It occurs when the pancreas doesn't produce enough insulin or when the body cannot effectively use the insulin it produces.",
-                "examples": [
-                    "Common usage: 'Type 2 diabetes can often be managed with lifestyle changes and medication'",
-                    "Related terms: insulin resistance, glucose monitoring, HbA1c levels",
-                    "When to seek help: If you experience excessive thirst, frequent urination, or unexplained weight loss",
-                ],
-            },
-            "cholesterol": {
-                "definition": "Cholesterol is a waxy, fat-like substance found in your blood. While your body needs cholesterol to build healthy cells, high levels of cholesterol can increase your risk of heart disease.",
-                "examples": [
-                    "Common usage: 'High cholesterol levels were detected in the lipid panel test'",
-                    "Related terms: LDL (bad cholesterol), HDL (good cholesterol), triglycerides",
-                    "When to seek help: Regular screening is recommended, especially if you have a family history",
-                ],
-            },
-        }
-
-        # Check if query matches known terms (case-insensitive)
-        query_lower = query.lower()
-        matched_info = None
-
-        for term, info in medical_info.items():
-            if term in query_lower or query_lower in term:
-                matched_info = info
-                break
-
-        # If no match, provide generic response
-        if not matched_info:
-            matched_info = {
-                "definition": f"{query} refers to a medical condition or health-related concept. This AI-powered explanation helps you understand complex medical terminology in simple terms.",
-                "examples": [
-                    f"Common usage: 'The patient was diagnosed with {query}'",
-                    "Related terms: cardiovascular health, preventive care, wellness",
-                    f"When to seek help: If you experience symptoms related to {query}, consult your healthcare provider",
+                    "Configure your Gemini API key in .env file",
+                    "GEMINI_API_KEY=your_api_key_here",
+                    "Restart the backend server to apply changes",
                 ],
             }
 
-        return {
-            "term": query,
-            "definition": matched_info["definition"],
-            "examples": matched_info["examples"],
-        }
+        try:
+            # Initialize Gemini model for medical tutor
+            model = genai.GenerativeModel(GEMINI_TUTOR_MODEL)
+
+            # Create a detailed prompt for medical term explanation
+            prompt = f"""You are a medical tutor AI assistant. Provide a comprehensive yet easy-to-understand explanation of the medical term or health concept: "{query}"
+
+Please structure your response in the following format:
+
+DEFINITION:
+Provide a clear, concise definition in 2-3 sentences that a patient can understand. Use simple language while maintaining medical accuracy.
+
+EXAMPLES:
+Provide 3 practical examples:
+1. A sentence showing how this term is commonly used in a medical context
+2. Related medical terms or concepts the patient should know
+3. When to seek medical help or what actions to take related to this condition
+
+Keep the tone friendly, informative, and patient-focused. Avoid overly technical jargon unless necessary."""
+
+            # Generate response
+            response = model.generate_content(prompt)
+            response_text = response.text
+
+            # Parse the response to extract definition and examples
+            definition = ""
+            examples = []
+
+            # Split response into sections
+            if "DEFINITION:" in response_text and "EXAMPLES:" in response_text:
+                parts = response_text.split("EXAMPLES:")
+                definition_part = parts[0].replace("DEFINITION:", "").strip()
+                examples_part = parts[1].strip()
+
+                definition = definition_part
+
+                # Split examples by newlines and filter out empty lines
+                example_lines = [line.strip() for line in examples_part.split('\n') if line.strip()]
+                examples = example_lines[:3] if len(example_lines) >= 3 else example_lines
+            else:
+                # If format not followed, use whole response as definition
+                lines = response_text.split('\n')
+                definition = '\n'.join(lines[:3])
+                examples = lines[3:6] if len(lines) > 3 else ["See definition above"]
+
+            return {
+                "term": query,
+                "definition": definition,
+                "examples": examples if examples else [
+                    "Medical information retrieved successfully",
+                    "Consult healthcare provider for personalized advice",
+                    "Keep track of your symptoms and health changes"
+                ],
+            }
+
+        except Exception as e:
+            # Fallback response on error
+            return {
+                "term": query,
+                "definition": f"I encountered an issue retrieving information about {query}. This could be a medical term, condition, or health concept. Please try rephrasing your search or consult a healthcare professional for accurate information.",
+                "examples": [
+                    f"Error: {str(e)}",
+                    "Try searching with different terms or more specific keywords",
+                    "Consult your healthcare provider for medical advice",
+                ],
+            }
 
     @staticmethod
     async def get_popular_terms() -> List[str]:

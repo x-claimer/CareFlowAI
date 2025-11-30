@@ -1,0 +1,489 @@
+#!/bin/bash
+
+################################################################################
+# AWS CareFlowAI Resource Cleanup Script
+#
+# WARNING: This script will DELETE all AWS resources created for CareFlowAI
+# This action is IRREVERSIBLE and will result in:
+# - Deletion of all application data
+# - Removal of all infrastructure
+# - Loss of all configurations
+#
+# ONLY run this script when you are absolutely certain you want to
+# completely remove the CareFlowAI deployment from AWS
+#
+# Usage: bash cleanup-aws-resources.sh
+################################################################################
+
+set -e
+
+# Color codes for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# Configuration - UPDATE THESE VALUES TO MATCH YOUR DEPLOYMENT
+AWS_REGION="us-east-1"
+EKS_CLUSTER_NAME="careflowai-cluster"
+ECR_REPOSITORY_FRONTEND="careflowai-frontend"
+ECR_REPOSITORY_BACKEND="careflowai-backend"
+MONGODB_CLUSTER_NAME="careflowai-mongodb"
+VPC_NAME="careflowai-vpc"
+LOAD_BALANCER_NAME="careflowai-alb"
+S3_BUCKET_NAME="careflowai-static-assets"
+IAM_ROLE_PREFIX="careflowai"
+
+echo -e "${RED}═══════════════════════════════════════════════════════════════${NC}"
+echo -e "${RED}         AWS CAREFLOWAI RESOURCE CLEANUP SCRIPT                ${NC}"
+echo -e "${RED}═══════════════════════════════════════════════════════════════${NC}"
+echo ""
+echo -e "${YELLOW}WARNING: This will DELETE ALL AWS resources for CareFlowAI${NC}"
+echo -e "${YELLOW}This includes:${NC}"
+echo "  - EKS Cluster and all running pods"
+echo "  - DocumentDB (MongoDB) cluster and all data"
+echo "  - ECR repositories and container images"
+echo "  - Load Balancers and Target Groups"
+echo "  - VPC, Subnets, and Network configurations"
+echo "  - S3 buckets and stored files"
+echo "  - IAM roles and policies"
+echo "  - Security Groups"
+echo ""
+echo -e "${RED}THIS ACTION CANNOT BE UNDONE!${NC}"
+echo ""
+
+# Confirmation prompt
+read -p "Type 'DELETE-CAREFLOWAI' to confirm deletion: " confirmation
+if [ "$confirmation" != "DELETE-CAREFLOWAI" ]; then
+    echo -e "${GREEN}Cleanup cancelled. No resources were deleted.${NC}"
+    exit 0
+fi
+
+echo ""
+read -p "Are you absolutely sure? Type 'YES' to proceed: " final_confirmation
+if [ "$final_confirmation" != "YES" ]; then
+    echo -e "${GREEN}Cleanup cancelled. No resources were deleted.${NC}"
+    exit 0
+fi
+
+echo ""
+echo -e "${YELLOW}Starting cleanup process...${NC}"
+echo ""
+
+################################################################################
+# 1. Delete Kubernetes Resources
+################################################################################
+echo -e "${YELLOW}[1/9] Deleting Kubernetes resources...${NC}"
+
+if kubectl config current-context | grep -q "$EKS_CLUSTER_NAME" 2>/dev/null; then
+    echo "Deleting all services (this will remove load balancers)..."
+    kubectl delete services --all --all-namespaces --wait=true 2>/dev/null || true
+
+    echo "Deleting all deployments..."
+    kubectl delete deployments --all --all-namespaces --wait=true 2>/dev/null || true
+
+    echo "Deleting all pods..."
+    kubectl delete pods --all --all-namespaces --force --grace-period=0 2>/dev/null || true
+
+    echo "Deleting all ingresses..."
+    kubectl delete ingress --all --all-namespaces 2>/dev/null || true
+
+    echo "Waiting for load balancers to be cleaned up..."
+    sleep 30
+else
+    echo "Kubernetes cluster not configured, skipping..."
+fi
+
+echo -e "${GREEN}✓ Kubernetes resources deleted${NC}"
+echo ""
+
+################################################################################
+# 2. Delete EKS Cluster
+################################################################################
+echo -e "${YELLOW}[2/9] Deleting EKS cluster...${NC}"
+
+if aws eks describe-cluster --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION" &>/dev/null; then
+    # Delete node groups first
+    NODE_GROUPS=$(aws eks list-nodegroups --cluster-name "$EKS_CLUSTER_NAME" --region "$AWS_REGION" --query 'nodegroups[]' --output text)
+
+    for ng in $NODE_GROUPS; do
+        echo "Deleting node group: $ng"
+        aws eks delete-nodegroup \
+            --cluster-name "$EKS_CLUSTER_NAME" \
+            --nodegroup-name "$ng" \
+            --region "$AWS_REGION" 2>/dev/null || true
+    done
+
+    # Wait for node groups to be deleted
+    echo "Waiting for node groups to be deleted..."
+    for ng in $NODE_GROUPS; do
+        aws eks wait nodegroup-deleted \
+            --cluster-name "$EKS_CLUSTER_NAME" \
+            --nodegroup-name "$ng" \
+            --region "$AWS_REGION" 2>/dev/null || true
+    done
+
+    # Delete the cluster
+    echo "Deleting EKS cluster: $EKS_CLUSTER_NAME"
+    aws eks delete-cluster \
+        --name "$EKS_CLUSTER_NAME" \
+        --region "$AWS_REGION" 2>/dev/null || true
+
+    echo "Waiting for cluster to be deleted (this may take 10-15 minutes)..."
+    aws eks wait cluster-deleted \
+        --name "$EKS_CLUSTER_NAME" \
+        --region "$AWS_REGION" 2>/dev/null || true
+else
+    echo "EKS cluster not found, skipping..."
+fi
+
+echo -e "${GREEN}✓ EKS cluster deleted${NC}"
+echo ""
+
+################################################################################
+# 3. Delete DocumentDB Cluster
+################################################################################
+echo -e "${YELLOW}[3/9] Deleting DocumentDB cluster...${NC}"
+
+# Get cluster instances
+DOCDB_INSTANCES=$(aws docdb describe-db-instances \
+    --region "$AWS_REGION" \
+    --query "DBInstances[?DBClusterIdentifier=='$MONGODB_CLUSTER_NAME'].DBInstanceIdentifier" \
+    --output text 2>/dev/null || true)
+
+# Delete instances
+for instance in $DOCDB_INSTANCES; do
+    echo "Deleting DocumentDB instance: $instance"
+    aws docdb delete-db-instance \
+        --db-instance-identifier "$instance" \
+        --region "$AWS_REGION" 2>/dev/null || true
+done
+
+# Wait for instances to be deleted
+for instance in $DOCDB_INSTANCES; do
+    echo "Waiting for instance $instance to be deleted..."
+    aws docdb wait db-instance-deleted \
+        --db-instance-identifier "$instance" \
+        --region "$AWS_REGION" 2>/dev/null || true
+done
+
+# Delete cluster
+if aws docdb describe-db-clusters --db-cluster-identifier "$MONGODB_CLUSTER_NAME" --region "$AWS_REGION" &>/dev/null; then
+    echo "Deleting DocumentDB cluster: $MONGODB_CLUSTER_NAME"
+    aws docdb delete-db-cluster \
+        --db-cluster-identifier "$MONGODB_CLUSTER_NAME" \
+        --skip-final-snapshot \
+        --region "$AWS_REGION" 2>/dev/null || true
+
+    echo "Waiting for cluster to be deleted..."
+    aws docdb wait db-cluster-deleted \
+        --db-cluster-identifier "$MONGODB_CLUSTER_NAME" \
+        --region "$AWS_REGION" 2>/dev/null || true
+else
+    echo "DocumentDB cluster not found, skipping..."
+fi
+
+# Delete subnet groups
+echo "Deleting DocumentDB subnet groups..."
+aws docdb delete-db-subnet-group \
+    --db-subnet-group-name "${MONGODB_CLUSTER_NAME}-subnet-group" \
+    --region "$AWS_REGION" 2>/dev/null || true
+
+echo -e "${GREEN}✓ DocumentDB cluster deleted${NC}"
+echo ""
+
+################################################################################
+# 4. Delete ECR Repositories
+################################################################################
+echo -e "${YELLOW}[4/9] Deleting ECR repositories...${NC}"
+
+for repo in "$ECR_REPOSITORY_FRONTEND" "$ECR_REPOSITORY_BACKEND"; do
+    if aws ecr describe-repositories --repository-names "$repo" --region "$AWS_REGION" &>/dev/null; then
+        echo "Deleting ECR repository: $repo"
+        aws ecr delete-repository \
+            --repository-name "$repo" \
+            --force \
+            --region "$AWS_REGION" 2>/dev/null || true
+    else
+        echo "ECR repository $repo not found, skipping..."
+    fi
+done
+
+echo -e "${GREEN}✓ ECR repositories deleted${NC}"
+echo ""
+
+################################################################################
+# 5. Delete Load Balancers
+################################################################################
+echo -e "${YELLOW}[5/9] Deleting load balancers...${NC}"
+
+# Get all load balancers with careflowai tag
+LB_ARNS=$(aws elbv2 describe-load-balancers \
+    --region "$AWS_REGION" \
+    --query "LoadBalancers[?contains(LoadBalancerName, 'careflowai')].LoadBalancerArn" \
+    --output text 2>/dev/null || true)
+
+for lb_arn in $LB_ARNS; do
+    echo "Deleting load balancer: $lb_arn"
+    aws elbv2 delete-load-balancer \
+        --load-balancer-arn "$lb_arn" \
+        --region "$AWS_REGION" 2>/dev/null || true
+done
+
+# Wait for load balancers to be deleted
+echo "Waiting for load balancers to be deleted..."
+sleep 30
+
+# Delete target groups
+TG_ARNS=$(aws elbv2 describe-target-groups \
+    --region "$AWS_REGION" \
+    --query "TargetGroups[?contains(TargetGroupName, 'careflowai')].TargetGroupArn" \
+    --output text 2>/dev/null || true)
+
+for tg_arn in $TG_ARNS; do
+    echo "Deleting target group: $tg_arn"
+    aws elbv2 delete-target-group \
+        --target-group-arn "$tg_arn" \
+        --region "$AWS_REGION" 2>/dev/null || true
+done
+
+echo -e "${GREEN}✓ Load balancers deleted${NC}"
+echo ""
+
+################################################################################
+# 6. Delete S3 Buckets
+################################################################################
+echo -e "${YELLOW}[6/9] Deleting S3 buckets...${NC}"
+
+if aws s3 ls "s3://$S3_BUCKET_NAME" --region "$AWS_REGION" &>/dev/null; then
+    echo "Emptying S3 bucket: $S3_BUCKET_NAME"
+    aws s3 rm "s3://$S3_BUCKET_NAME" --recursive --region "$AWS_REGION" 2>/dev/null || true
+
+    echo "Deleting S3 bucket: $S3_BUCKET_NAME"
+    aws s3 rb "s3://$S3_BUCKET_NAME" --force --region "$AWS_REGION" 2>/dev/null || true
+else
+    echo "S3 bucket not found, skipping..."
+fi
+
+echo -e "${GREEN}✓ S3 buckets deleted${NC}"
+echo ""
+
+################################################################################
+# 7. Delete NAT Gateways and Elastic IPs
+################################################################################
+echo -e "${YELLOW}[7/9] Deleting NAT gateways and Elastic IPs...${NC}"
+
+# Get VPC ID
+VPC_ID=$(aws ec2 describe-vpcs \
+    --region "$AWS_REGION" \
+    --filters "Name=tag:Name,Values=$VPC_NAME" \
+    --query "Vpcs[0].VpcId" \
+    --output text 2>/dev/null || true)
+
+if [ "$VPC_ID" != "None" ] && [ -n "$VPC_ID" ]; then
+    # Delete NAT Gateways
+    NAT_GATEWAYS=$(aws ec2 describe-nat-gateways \
+        --region "$AWS_REGION" \
+        --filter "Name=vpc-id,Values=$VPC_ID" \
+        --query "NatGateways[?State!='deleted'].NatGatewayId" \
+        --output text 2>/dev/null || true)
+
+    for nat in $NAT_GATEWAYS; do
+        echo "Deleting NAT Gateway: $nat"
+        aws ec2 delete-nat-gateway \
+            --nat-gateway-id "$nat" \
+            --region "$AWS_REGION" 2>/dev/null || true
+    done
+
+    # Wait for NAT gateways to be deleted
+    if [ -n "$NAT_GATEWAYS" ]; then
+        echo "Waiting for NAT gateways to be deleted..."
+        sleep 60
+    fi
+
+    # Release Elastic IPs
+    EIP_ALLOCS=$(aws ec2 describe-addresses \
+        --region "$AWS_REGION" \
+        --filters "Name=domain,Values=vpc" \
+        --query "Addresses[?contains(Tags[?Key=='Name'].Value, 'careflowai')].AllocationId" \
+        --output text 2>/dev/null || true)
+
+    for eip in $EIP_ALLOCS; do
+        echo "Releasing Elastic IP: $eip"
+        aws ec2 release-address \
+            --allocation-id "$eip" \
+            --region "$AWS_REGION" 2>/dev/null || true
+    done
+fi
+
+echo -e "${GREEN}✓ NAT gateways and Elastic IPs deleted${NC}"
+echo ""
+
+################################################################################
+# 8. Delete VPC and Network Resources
+################################################################################
+echo -e "${YELLOW}[8/9] Deleting VPC and network resources...${NC}"
+
+if [ "$VPC_ID" != "None" ] && [ -n "$VPC_ID" ]; then
+    echo "Deleting resources in VPC: $VPC_ID"
+
+    # Delete Internet Gateways
+    IGW_IDS=$(aws ec2 describe-internet-gateways \
+        --region "$AWS_REGION" \
+        --filters "Name=attachment.vpc-id,Values=$VPC_ID" \
+        --query "InternetGateways[].InternetGatewayId" \
+        --output text 2>/dev/null || true)
+
+    for igw in $IGW_IDS; do
+        echo "Detaching and deleting Internet Gateway: $igw"
+        aws ec2 detach-internet-gateway \
+            --internet-gateway-id "$igw" \
+            --vpc-id "$VPC_ID" \
+            --region "$AWS_REGION" 2>/dev/null || true
+        aws ec2 delete-internet-gateway \
+            --internet-gateway-id "$igw" \
+            --region "$AWS_REGION" 2>/dev/null || true
+    done
+
+    # Delete Subnets
+    SUBNET_IDS=$(aws ec2 describe-subnets \
+        --region "$AWS_REGION" \
+        --filters "Name=vpc-id,Values=$VPC_ID" \
+        --query "Subnets[].SubnetId" \
+        --output text 2>/dev/null || true)
+
+    for subnet in $SUBNET_IDS; do
+        echo "Deleting subnet: $subnet"
+        aws ec2 delete-subnet \
+            --subnet-id "$subnet" \
+            --region "$AWS_REGION" 2>/dev/null || true
+    done
+
+    # Delete Route Tables (except main)
+    ROUTE_TABLE_IDS=$(aws ec2 describe-route-tables \
+        --region "$AWS_REGION" \
+        --filters "Name=vpc-id,Values=$VPC_ID" \
+        --query "RouteTables[?Associations[0].Main!=\`true\`].RouteTableId" \
+        --output text 2>/dev/null || true)
+
+    for rt in $ROUTE_TABLE_IDS; do
+        echo "Deleting route table: $rt"
+        aws ec2 delete-route-table \
+            --route-table-id "$rt" \
+            --region "$AWS_REGION" 2>/dev/null || true
+    done
+
+    # Delete Security Groups (except default)
+    SECURITY_GROUP_IDS=$(aws ec2 describe-security-groups \
+        --region "$AWS_REGION" \
+        --filters "Name=vpc-id,Values=$VPC_ID" \
+        --query "SecurityGroups[?GroupName!='default'].GroupId" \
+        --output text 2>/dev/null || true)
+
+    for sg in $SECURITY_GROUP_IDS; do
+        echo "Deleting security group: $sg"
+        aws ec2 delete-security-group \
+            --group-id "$sg" \
+            --region "$AWS_REGION" 2>/dev/null || true
+    done
+
+    # Delete VPC
+    echo "Deleting VPC: $VPC_ID"
+    aws ec2 delete-vpc \
+        --vpc-id "$VPC_ID" \
+        --region "$AWS_REGION" 2>/dev/null || true
+else
+    echo "VPC not found, skipping..."
+fi
+
+echo -e "${GREEN}✓ VPC and network resources deleted${NC}"
+echo ""
+
+################################################################################
+# 9. Delete IAM Roles and Policies
+################################################################################
+echo -e "${YELLOW}[9/9] Deleting IAM roles and policies...${NC}"
+
+# Delete EKS cluster role
+for role in "${IAM_ROLE_PREFIX}-eks-cluster-role" "${IAM_ROLE_PREFIX}-eks-node-role" "${IAM_ROLE_PREFIX}-pod-role"; do
+    if aws iam get-role --role-name "$role" &>/dev/null; then
+        echo "Detaching policies from role: $role"
+
+        # Detach managed policies
+        ATTACHED_POLICIES=$(aws iam list-attached-role-policies \
+            --role-name "$role" \
+            --query "AttachedPolicies[].PolicyArn" \
+            --output text 2>/dev/null || true)
+
+        for policy in $ATTACHED_POLICIES; do
+            aws iam detach-role-policy \
+                --role-name "$role" \
+                --policy-arn "$policy" 2>/dev/null || true
+        done
+
+        # Delete inline policies
+        INLINE_POLICIES=$(aws iam list-role-policies \
+            --role-name "$role" \
+            --query "PolicyNames[]" \
+            --output text 2>/dev/null || true)
+
+        for policy in $INLINE_POLICIES; do
+            aws iam delete-role-policy \
+                --role-name "$role" \
+                --policy-name "$policy" 2>/dev/null || true
+        done
+
+        # Delete role
+        echo "Deleting IAM role: $role"
+        aws iam delete-role --role-name "$role" 2>/dev/null || true
+    fi
+done
+
+# Delete custom IAM policies
+CUSTOM_POLICIES=$(aws iam list-policies \
+    --scope Local \
+    --query "Policies[?contains(PolicyName, '$IAM_ROLE_PREFIX')].Arn" \
+    --output text 2>/dev/null || true)
+
+for policy in $CUSTOM_POLICIES; do
+    echo "Deleting IAM policy: $policy"
+
+    # Delete all policy versions except default
+    VERSIONS=$(aws iam list-policy-versions \
+        --policy-arn "$policy" \
+        --query "Versions[?IsDefaultVersion==\`false\`].VersionId" \
+        --output text 2>/dev/null || true)
+
+    for version in $VERSIONS; do
+        aws iam delete-policy-version \
+            --policy-arn "$policy" \
+            --version-id "$version" 2>/dev/null || true
+    done
+
+    aws iam delete-policy --policy-arn "$policy" 2>/dev/null || true
+done
+
+echo -e "${GREEN}✓ IAM roles and policies deleted${NC}"
+echo ""
+
+################################################################################
+# Cleanup Complete
+################################################################################
+echo ""
+echo -e "${GREEN}═══════════════════════════════════════════════════════════════${NC}"
+echo -e "${GREEN}         CLEANUP COMPLETED SUCCESSFULLY                        ${NC}"
+echo -e "${GREEN}═══════════════════════════════════════════════════════════════${NC}"
+echo ""
+echo "All CareFlowAI AWS resources have been deleted."
+echo ""
+echo -e "${YELLOW}Please verify in the AWS Console that all resources are gone:${NC}"
+echo "  1. EKS: https://console.aws.amazon.com/eks"
+echo "  2. DocumentDB: https://console.aws.amazon.com/docdb"
+echo "  3. ECR: https://console.aws.amazon.com/ecr"
+echo "  4. VPC: https://console.aws.amazon.com/vpc"
+echo "  5. Load Balancers: https://console.aws.amazon.com/ec2/v2/home#LoadBalancers"
+echo "  6. S3: https://console.aws.amazon.com/s3"
+echo "  7. IAM: https://console.aws.amazon.com/iam"
+echo ""
+echo -e "${YELLOW}Note: Some resources may take a few minutes to fully delete.${NC}"
+echo ""

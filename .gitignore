@@ -213,3 +213,51 @@ __marimo__/
 backend/careflowai.db
 backend/uploads/*
 !backend/uploads/.gitkeep
+
+# Frontend specific
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+frontend/.vite/
+frontend/.env
+frontend/.env.local
+frontend/.env.production
+
+# OS specific
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# IDE specific
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+*.code-workspace
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+careflowai.db
+
+# Sensitive files
+*.pem
+*.key
+*.cert
+*.crt
+secrets.json
+config.local.*

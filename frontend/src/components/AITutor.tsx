@@ -1,5 +1,6 @@
-import { useState } from 'react'
-import { Search, BookOpen, Lightbulb, Sparkles, TrendingUp } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Search, BookOpen, Lightbulb, Sparkles, TrendingUp, AlertCircle } from 'lucide-react'
+import { api } from '../lib/api'
 
 interface SearchResult {
   term: string
@@ -11,37 +12,49 @@ export function AITutor() {
   const [searchQuery, setSearchQuery] = useState('')
   const [searching, setSearching] = useState(false)
   const [result, setResult] = useState<SearchResult | null>(null)
-
-  const handleSearch = async () => {
-    if (!searchQuery.trim()) return
-
-    setSearching(true)
-
-    // Simulate AI search
-    await new Promise(resolve => setTimeout(resolve, 1500))
-
-    // Mock result based on query
-    setResult({
-      term: searchQuery,
-      definition: `${searchQuery} refers to a medical condition or health-related concept. This AI-powered explanation helps you understand complex medical terminology in simple terms.`,
-      examples: [
-        `Common usage: "The patient was diagnosed with ${searchQuery}"`,
-        `Related terms: cardiovascular health, preventive care`,
-        `When to seek help: If you experience symptoms related to ${searchQuery}`
-      ]
-    })
-
-    setSearching(false)
-  }
-
-  const popularTerms = [
+  const [error, setError] = useState<string | null>(null)
+  const [popularTerms, setPopularTerms] = useState<string[]>([
     'Hypertension',
     'Diabetes',
     'Cholesterol',
     'BMI',
     'Cardiovascular',
     'Inflammation'
-  ]
+  ])
+
+  // Load popular terms on mount
+  useEffect(() => {
+    const loadPopularTerms = async () => {
+      try {
+        const response = await api.getPopularTerms()
+        if (response.terms && response.terms.length > 0) {
+          setPopularTerms(response.terms)
+        }
+      } catch (err) {
+        // Keep default popular terms if API fails
+        console.error('Failed to load popular terms:', err)
+      }
+    }
+    loadPopularTerms()
+  }, [])
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) return
+
+    setSearching(true)
+    setError(null)
+
+    try {
+      // Call the real API with Gemini integration
+      const response = await api.searchMedicalTerm(searchQuery.trim())
+      setResult(response)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to search. Please try again.')
+      setResult(null)
+    } finally {
+      setSearching(false)
+    }
+  }
 
   return (
     <div className="relative group">
@@ -112,6 +125,18 @@ export function AITutor() {
               </button>
             ))}
           </div>
+
+          {error && (
+            <div className="bg-gradient-to-r from-red-900/30 to-red-800/30 border border-red-700/50 rounded-xl p-4 backdrop-blur-sm animate-slide-up">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+                <div>
+                  <h4 className="text-red-300 font-semibold mb-1">Search Error</h4>
+                  <p className="text-red-200 text-sm">{error}</p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {result && (
             <div className="bg-gradient-to-br from-gray-800/80 to-gray-900/80 rounded-xl p-6 border border-gray-700/50 backdrop-blur-sm shadow-xl space-y-5 animate-slide-up">

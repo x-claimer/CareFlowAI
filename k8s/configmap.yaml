@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: careflowai-config
+  namespace: careflowai
+data:
+  # Database configuration
+  DATABASE_NAME: "careflowai"
+
+  # JWT configuration
+  ALGORITHM: "HS256"
+  ACCESS_TOKEN_EXPIRE_MINUTES: "30"
+
+  # Upload configuration
+  UPLOAD_DIR: "/app/uploads"
+  MAX_UPLOAD_SIZE: "10485760"
+
+  # Backend URL (for frontend to communicate with backend)
+  BACKEND_URL: "http://backend-service:8000"
