@@ -1,0 +1,165 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'EC2 Instance for CareFlowAI Backend'
+
+Parameters:
+  EnvironmentName:
+    Description: Environment name prefix
+    Type: String
+    Default: CareFlowAI
+
+  InstanceType:
+    Description: EC2 instance type
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - t3.small
+      - t3.medium
+    ConstraintDescription: Must be a valid EC2 instance type
+
+  KeyName:
+    Description: EC2 Key Pair for SSH access
+    Type: AWS::EC2::KeyPair::KeyName
+
+  VPCId:
+    Description: VPC ID
+    Type: String
+
+  SubnetId:
+    Description: Subnet ID
+    Type: String
+
+  SecurityGroupId:
+    Description: Security Group ID
+    Type: String
+
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id'
+
+Resources:
+  # IAM Role for EC2
+  EC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-EC2-Role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-09'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Policies:
+        - PolicyName: LambdaInvokePolicy
+          PolicyDocument:
+            Version: '2012-10-09'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'lambda:InvokeFunction'
+                Resource: '*'
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-EC2-Role
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub ${EnvironmentName}-EC2-Profile
+      Roles:
+        - !Ref EC2Role
+
+  # Elastic IP
+  ElasticIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-EIP
+
+  # EC2 Instance
+  BackendInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeviceIndex: '0'
+          GroupSet:
+            - !Ref SecurityGroupId
+          SubnetId: !Ref SubnetId
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 30
+            VolumeType: gp3
+            DeleteOnTermination: true
+            Encrypted: true
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -e
+
+          # Update system
+          apt-get update
+          apt-get upgrade -y
+
+          # Install basic tools
+          apt-get install -y git curl wget vim htop
+
+          # Install Python 3.11+
+          apt-get install -y python3 python3-pip python3-venv
+
+          # Install Nginx
+          apt-get install -y nginx
+
+          # Install system dependencies
+          apt-get install -y build-essential libssl-dev libffi-dev python3-dev
+
+          # Create app directory
+          mkdir -p /opt/careflowai
+          chown ubuntu:ubuntu /opt/careflowai
+
+          # Setup CloudWatch agent (optional)
+          wget https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb
+          dpkg -i amazon-cloudwatch-agent.deb
+
+          echo "EC2 instance setup completed" > /var/log/user-data.log
+
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-Backend
+
+  EIPAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      InstanceId: !Ref BackendInstance
+      EIP: !Ref ElasticIP
+
+Outputs:
+  InstanceId:
+    Description: EC2 Instance ID
+    Value: !Ref BackendInstance
+    Export:
+      Name: !Sub ${EnvironmentName}-BackendInstanceId
+
+  ElasticIP:
+    Description: Elastic IP Address
+    Value: !Ref ElasticIP
+    Export:
+      Name: !Sub ${EnvironmentName}-ElasticIP
+
+  PublicDNS:
+    Description: Public DNS name
+    Value: !GetAtt BackendInstance.PublicDnsName
+    Export:
+      Name: !Sub ${EnvironmentName}-PublicDNS

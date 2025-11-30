@@ -1,14 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from bson import ObjectId
+from typing import List
 
 from app.database import get_db
-from app.schemas.user import UserLogin, UserSignup, UserResponse, Token
+from app.schemas.user import UserLogin, UserSignup, UserResponse, Token, UserCreate
 from app.utils.auth import (
     verify_password,
     get_password_hash,
     create_access_token,
     get_current_user,
+    require_role,
 )
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
@@ -160,4 +162,117 @@ async def get_current_user_info(current_user: dict = Depends(get_current_user)):
         email=current_user["email"],
         name=current_user["name"],
         role=current_user["role"],
+    )
+
+
+@router.get("/users", response_model=List[UserResponse])
+async def get_users(
+    role: str = None,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Get all users with optional role filter
+    """
+    query = {}
+    if role:
+        query["role"] = role
+
+    users = await db.users.find(query).to_list(length=None)
+
+    return [
+        UserResponse(
+            id=str(user["_id"]),
+            email=user["email"],
+            name=user["name"],
+            role=user["role"],
+        )
+        for user in users
+    ]
+
+
+@router.post("/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def create_user(
+    user_data: UserCreate,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: dict = Depends(require_role("admin")),
+):
+    """
+    Create a new user with any role (admin only)
+    """
+    # Check if user already exists
+    existing_user = await db.users.find_one({"email": user_data.email})
+
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered",
+        )
+
+    # Create new user
+    user_id = str(ObjectId())
+    user_doc = {
+        "_id": ObjectId(user_id),
+        "email": user_data.email,
+        "name": user_data.name,
+        "hashed_password": get_password_hash(user_data.password),
+        "role": user_data.role,
+    }
+
+    await db.users.insert_one(user_doc)
+
+    return UserResponse(
+        id=str(user_doc["_id"]),
+        email=user_doc["email"],
+        name=user_doc["name"],
+        role=user_doc["role"],
+    )
+
+
+@router.put("/users/{user_id}/role", response_model=UserResponse)
+async def update_user_role(
+    user_id: str,
+    role: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: dict = Depends(require_role("admin")),
+):
+    """
+    Update a user's role (admin only)
+    """
+    if not ObjectId.is_valid(user_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user ID",
+        )
+
+    # Validate role
+    valid_roles = ["patient", "doctor", "receptionist", "admin"]
+    if role not in valid_roles:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid role. Must be one of: {', '.join(valid_roles)}",
+        )
+
+    user = await db.users.find_one({"_id": ObjectId(user_id)})
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    # Update role
+    await db.users.update_one(
+        {"_id": ObjectId(user_id)},
+        {"$set": {"role": role}}
+    )
+
+    # Fetch updated user
+    updated_user = await db.users.find_one({"_id": ObjectId(user_id)})
+
+    return UserResponse(
+        id=str(updated_user["_id"]),
+        email=updated_user["email"],
+        name=updated_user["name"],
+        role=updated_user["role"],
     )

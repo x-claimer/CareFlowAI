@@ -20,15 +20,48 @@ router = APIRouter(prefix="/api/appointments", tags=["Appointments"])
 @router.get("", response_model=List[AppointmentResponse])
 async def get_appointments(
     status_filter: Optional[str] = Query(None, alias="status"),
+    patient_filter: Optional[str] = Query(None, alias="patient"),
+    doctor_filter: Optional[str] = Query(None, alias="doctor"),
     db: AsyncIOMotorDatabase = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
     """
-    Get all appointments with optional status filter
+    Get appointments with role-based filtering:
+    - Patient: Only their appointments (filtered by patient_id)
+    - Doctor: Only their patients' appointments across all doctors (filtered by patient list)
+    - Receptionist/Admin: All appointments with optional patient/doctor filters
     """
     query = {}
+    user_role = current_user["role"]
+    user_id = str(current_user["_id"])
+
+    # Role-based filtering
+    if user_role == "patient":
+        # Patient can only see their own appointments
+        query["patient_id"] = user_id
+    elif user_role == "doctor":
+        # Doctor can see all appointments for their patients (across all doctors)
+        # First, get all unique patient IDs from appointments where this doctor is the doctor
+        doctor_appointments = await db.appointments.find({"doctor_id": user_id}).to_list(length=None)
+        patient_ids = list(set([appt["patient_id"] for appt in doctor_appointments]))
+
+        # Now get all appointments for these patients
+        if patient_ids:
+            query["patient_id"] = {"$in": patient_ids}
+        else:
+            # Doctor has no patients yet
+            query["patient_id"] = {"$in": []}
+    # For receptionist and admin, no additional filter is added (they see all)
+
+    # Additional filters
     if status_filter and status_filter != "all":
         query["status"] = status_filter
+
+    if patient_filter:
+        query["patient_id"] = patient_filter
+
+    if doctor_filter:
+        query["doctor_id"] = doctor_filter
 
     appointments = await db.appointments.find(query).sort("created_at", -1).to_list(length=None)
 
@@ -40,7 +73,9 @@ async def get_appointments(
         response.append(
             AppointmentResponse(
                 id=str(appointment["_id"]),
+                patient_id=appointment["patient_id"],
                 patient_name=appointment["patient_name"],
+                doctor_id=appointment["doctor_id"],
                 doctor_name=appointment["doctor_name"],
                 date=appointment["date"],
                 time=appointment["time"],
@@ -67,14 +102,16 @@ async def get_appointments(
 async def create_appointment(
     appointment_data: AppointmentCreate,
     db: AsyncIOMotorDatabase = Depends(get_db),
-    current_user: dict = Depends(require_role("doctor", "receptionist")),
+    current_user: dict = Depends(require_role("doctor", "receptionist", "admin")),
 ):
     """
-    Create a new appointment (requires doctor or receptionist role)
+    Create a new appointment (requires doctor, receptionist, or admin role)
     """
     appointment_doc = {
         "_id": ObjectId(),
+        "patient_id": appointment_data.patient_id,
         "patient_name": appointment_data.patient_name,
+        "doctor_id": appointment_data.doctor_id,
         "doctor_name": appointment_data.doctor_name,
         "date": appointment_data.date,
         "time": appointment_data.time,
@@ -88,7 +125,9 @@ async def create_appointment(
 
     return AppointmentResponse(
         id=str(appointment_doc["_id"]),
+        patient_id=appointment_doc["patient_id"],
         patient_name=appointment_doc["patient_name"],
+        doctor_id=appointment_doc["doctor_id"],
         doctor_name=appointment_doc["doctor_name"],
         date=appointment_doc["date"],
         time=appointment_doc["time"],
@@ -103,10 +142,10 @@ async def update_appointment(
     appointment_id: str,
     appointment_data: AppointmentUpdate,
     db: AsyncIOMotorDatabase = Depends(get_db),
-    current_user: dict = Depends(require_role("doctor", "receptionist")),
+    current_user: dict = Depends(require_role("doctor", "receptionist", "admin")),
 ):
     """
-    Update an appointment (requires doctor or receptionist role)
+    Update an appointment (requires doctor, receptionist, or admin role)
     """
     if not ObjectId.is_valid(appointment_id):
         raise HTTPException(
@@ -124,8 +163,12 @@ async def update_appointment(
 
     # Build update document
     update_doc = {"updated_at": datetime.utcnow()}
+    if appointment_data.patient_id is not None:
+        update_doc["patient_id"] = appointment_data.patient_id
     if appointment_data.patient_name is not None:
         update_doc["patient_name"] = appointment_data.patient_name
+    if appointment_data.doctor_id is not None:
+        update_doc["doctor_id"] = appointment_data.doctor_id
     if appointment_data.doctor_name is not None:
         update_doc["doctor_name"] = appointment_data.doctor_name
     if appointment_data.date is not None:
@@ -150,7 +193,9 @@ async def update_appointment(
 
     return AppointmentResponse(
         id=str(updated_appointment["_id"]),
+        patient_id=updated_appointment["patient_id"],
         patient_name=updated_appointment["patient_name"],
+        doctor_id=updated_appointment["doctor_id"],
         doctor_name=updated_appointment["doctor_name"],
         date=updated_appointment["date"],
         time=updated_appointment["time"],
@@ -174,10 +219,10 @@ async def update_appointment(
 async def delete_appointment(
     appointment_id: str,
     db: AsyncIOMotorDatabase = Depends(get_db),
-    current_user: dict = Depends(require_role("doctor", "receptionist")),
+    current_user: dict = Depends(require_role("doctor", "receptionist", "admin")),
 ):
     """
-    Delete an appointment (requires doctor or receptionist role)
+    Delete an appointment (requires doctor, receptionist, or admin role)
     """
     if not ObjectId.is_valid(appointment_id):
         raise HTTPException(

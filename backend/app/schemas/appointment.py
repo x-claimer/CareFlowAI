@@ -23,7 +23,9 @@ class CommentResponse(CommentBase):
 
 
 class AppointmentBase(BaseModel):
+    patient_id: str
     patient_name: str
+    doctor_id: str
     doctor_name: str
     date: str
     time: str
@@ -35,7 +37,9 @@ class AppointmentCreate(AppointmentBase):
 
 
 class AppointmentUpdate(BaseModel):
+    patient_id: Optional[str] = None
     patient_name: Optional[str] = None
+    doctor_id: Optional[str] = None
     doctor_name: Optional[str] = None
     date: Optional[str] = None
     time: Optional[str] = None

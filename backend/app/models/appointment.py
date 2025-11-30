@@ -22,7 +22,9 @@ class PyObjectId(ObjectId):
 
 class AppointmentModel(BaseModel):
     id: Optional[PyObjectId] = Field(alias="_id", default=None)
+    patient_id: str
     patient_name: str
+    doctor_id: str
     doctor_name: str
     date: str
     time: str

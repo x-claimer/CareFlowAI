@@ -2,10 +2,21 @@ from pydantic import BaseModel
 from typing import List, Optional
 
 
+class HealthMetric(BaseModel):
+    name: str
+    value: str
+    unit: str
+    status: str  # "normal", "warning", "critical"
+    reference_range: str
+    interpretation: str
+
+
 class AnalyzeReportResponse(BaseModel):
     analysis: str
     summary: str
     file_name: str
+    metrics: List[HealthMetric] = []
+    recommendations: List[str] = []
 
 
 class ChatRequest(BaseModel):
