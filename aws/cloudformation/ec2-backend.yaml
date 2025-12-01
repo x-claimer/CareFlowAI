@@ -44,7 +44,7 @@ Resources:
     Properties:
       RoleName: !Sub ${EnvironmentName}-EC2-Role
       AssumeRolePolicyDocument:
-        Version: '2012-10-09'
+        Version: '2012-10-17'
         Statement:
           - Effect: Allow
             Principal:
@@ -57,7 +57,7 @@ Resources:
       Policies:
         - PolicyName: LambdaInvokePolicy
           PolicyDocument:
-            Version: '2012-10-09'
+            Version: '2012-10-17'
             Statement:
               - Effect: Allow
                 Action:

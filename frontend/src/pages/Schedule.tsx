@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { AppointmentCard } from '../components/AppointmentCard'
-import type { Appointment, Comment } from '../components/AppointmentCard'
+import type { Appointment } from '../components/AppointmentCard'
 import { useAuth } from '../contexts/AuthContext'
-import { Plus, Filter, Calendar as CalendarIcon, Sparkles, Database, TestTube, Users, UserPlus } from 'lucide-react'
+import { Plus, Filter, Calendar as CalendarIcon, Sparkles, Database, TestTube, Users, UserPlus, Trash2, UserCog } from 'lucide-react'
 import { api } from '../lib/api'
 import type { User } from '../lib/api'
 
@@ -10,7 +10,6 @@ export function Schedule() {
   const { user } = useAuth()
   const [useMockData, setUseMockData] = useState(false)
   const [appointments, setAppointments] = useState<Appointment[]>([])
-  const [users, setUsers] = useState<User[]>([])
   const [patients, setPatients] = useState<User[]>([])
   const [doctors, setDoctors] = useState<User[]>([])
   const [loading, setLoading] = useState(false)
@@ -18,6 +17,8 @@ export function Schedule() {
 
   const [showNewAppointmentForm, setShowNewAppointmentForm] = useState(false)
   const [showNewUserForm, setShowNewUserForm] = useState(false)
+  const [showUserManagement, setShowUserManagement] = useState(false)
+  const [allUsers, setAllUsers] = useState<User[]>([])
   const [filterStatus, setFilterStatus] = useState<string>('all')
   const [filterPatient, setFilterPatient] = useState<string>('')
   const [filterDoctor, setFilterDoctor] = useState<string>('')
@@ -48,7 +49,6 @@ export function Schedule() {
     const fetchUsers = async () => {
       try {
         const allUsers = await api.getUsers()
-        setUsers(allUsers)
         setPatients(allUsers.filter(u => u.role === 'patient'))
         setDoctors(allUsers.filter(u => u.role === 'doctor'))
       } catch (err) {
@@ -111,7 +111,8 @@ export function Schedule() {
   })
 
   const canCreateAppointment = user?.role === 'doctor' || user?.role === 'receptionist' || user?.role === 'admin'
-  const canManageUsers = user?.role === 'admin'
+  const canManageUsers = user?.role === 'admin' || user?.role === 'receptionist'
+  const canDeleteUsers = user?.role === 'admin'
   const canFilterByPatient = user?.role === 'doctor' || user?.role === 'receptionist' || user?.role === 'admin'
   const canFilterByDoctor = user?.role === 'receptionist' || user?.role === 'admin'
 
@@ -187,6 +188,17 @@ export function Schedule() {
     }
   }
 
+  const loadAllUsers = async () => {
+    try {
+      const users = await api.getUsers()
+      setAllUsers(users)
+      setPatients(users.filter(u => u.role === 'patient'))
+      setDoctors(users.filter(u => u.role === 'doctor'))
+    } catch (err) {
+      console.error('Failed to load users:', err)
+    }
+  }
+
   const handleCreateUser = async () => {
     if (!newUser.name || !newUser.email || !newUser.password || !newUser.role) {
       alert('Please fill in all required fields')
@@ -197,10 +209,7 @@ export function Schedule() {
       await api.createUser(newUser)
 
       // Refresh users
-      const allUsers = await api.getUsers()
-      setUsers(allUsers)
-      setPatients(allUsers.filter(u => u.role === 'patient'))
-      setDoctors(allUsers.filter(u => u.role === 'doctor'))
+      await loadAllUsers()
 
       setNewUser({
         name: '',
@@ -213,6 +222,21 @@ export function Schedule() {
     } catch (err) {
       console.error('Failed to create user:', err)
       alert('Failed to create user')
+    }
+  }
+
+  const handleDeleteUser = async (userId: string, userName: string) => {
+    if (!confirm(`Are you sure you want to delete user "${userName}"? This will also delete all their appointments.`)) {
+      return
+    }
+
+    try {
+      await api.deleteUser(userId)
+      await loadAllUsers()
+      alert('User deleted successfully!')
+    } catch (err) {
+      console.error('Failed to delete user:', err)
+      alert('Failed to delete user')
     }
   }
 
@@ -267,9 +291,29 @@ export function Schedule() {
           </div>
 
           <div className="flex items-center gap-3">
+            {canDeleteUsers && (
+              <button
+                onClick={async () => {
+                  setShowUserManagement(!showUserManagement)
+                  setShowNewUserForm(false)
+                  setShowNewAppointmentForm(false)
+                  if (!showUserManagement) {
+                    await loadAllUsers()
+                  }
+                }}
+                className="flex items-center space-x-2 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white px-6 py-3 rounded-xl font-semibold transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-purple-500/50"
+              >
+                <UserCog className="w-5 h-5" />
+                <span>Manage Users</span>
+              </button>
+            )}
             {canManageUsers && (
               <button
-                onClick={() => setShowNewUserForm(!showNewUserForm)}
+                onClick={() => {
+                  setShowNewUserForm(!showNewUserForm)
+                  setShowNewAppointmentForm(false)
+                  setShowUserManagement(false)
+                }}
                 className="flex items-center space-x-2 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white px-6 py-3 rounded-xl font-semibold transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-green-500/50"
               >
                 <UserPlus className="w-5 h-5" />
@@ -278,7 +322,11 @@ export function Schedule() {
             )}
             {canCreateAppointment && (
               <button
-                onClick={() => setShowNewAppointmentForm(!showNewAppointmentForm)}
+                onClick={() => {
+                  setShowNewAppointmentForm(!showNewAppointmentForm)
+                  setShowNewUserForm(false)
+                  setShowUserManagement(false)
+                }}
                 className="flex items-center space-x-2 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-6 py-3 rounded-xl font-semibold transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-blue-500/50"
               >
                 <Plus className="w-5 h-5" />
@@ -288,7 +336,8 @@ export function Schedule() {
           </div>
         </div>
 
-        {/* Data Source Toggle */}
+        {/* Data Source Toggle - Hide when creating user, appointment, or managing users */}
+        {!showNewUserForm && !showNewAppointmentForm && !showUserManagement && (
         <div className="bg-gradient-to-br from-gray-900 to-gray-900/80 border border-gray-800/50 rounded-xl p-5 mb-6 backdrop-blur-sm shadow-xl animate-slide-up">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -337,22 +386,24 @@ export function Schedule() {
             </div>
           )}
         </div>
+        )}
 
-        {/* Filter Section */}
+        {/* Filter Section - Hide when creating user, appointment, or managing users */}
+        {!showNewUserForm && !showNewAppointmentForm && !showUserManagement && (
         <div className="bg-gradient-to-br from-gray-900 to-gray-900/80 border border-gray-800/50 rounded-xl p-5 mb-6 backdrop-blur-sm shadow-xl animate-slide-up">
-          <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-4">
             {/* Status Filter */}
-            <div className="flex items-center space-x-4 flex-wrap gap-2">
+            <div className="flex items-center gap-3">
               <div className="flex items-center gap-2 text-gray-400">
                 <Filter className="w-5 h-5" />
                 <span className="font-semibold">Status:</span>
               </div>
-              <div className="flex space-x-2 flex-wrap gap-2">
+              <div className="flex space-x-2">
                 {['all', 'scheduled', 'completed', 'cancelled'].map((status) => (
                   <button
                     key={status}
                     onClick={() => setFilterStatus(status)}
-                    className={`px-5 py-2 rounded-lg text-sm font-semibold transition-all duration-300 transform hover:scale-105 ${
+                    className={`px-5 py-2.5 rounded-lg text-sm font-semibold transition-all duration-300 transform hover:scale-105 ${
                       filterStatus === status
                         ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg'
                         : 'bg-gray-800/50 text-gray-400 hover:text-white hover:bg-gray-700/50 border border-gray-700'
@@ -366,7 +417,7 @@ export function Schedule() {
 
             {/* Patient Filter (for Doctor, Receptionist, Admin) */}
             {canFilterByPatient && (
-              <div className="flex items-center space-x-4 flex-wrap gap-2">
+              <div className="flex items-center gap-3">
                 <div className="flex items-center gap-2 text-gray-400">
                   <Users className="w-5 h-5" />
                   <span className="font-semibold">Patient:</span>
@@ -374,7 +425,7 @@ export function Schedule() {
                 <select
                   value={filterPatient}
                   onChange={(e) => setFilterPatient(e.target.value)}
-                  className="bg-gray-900/50 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all duration-300 hover:border-gray-600"
+                  className="bg-gray-900/50 border border-gray-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all duration-300 hover:border-gray-600"
                 >
                   <option value="">All Patients</option>
                   {patients.map(patient => (
@@ -386,7 +437,7 @@ export function Schedule() {
 
             {/* Doctor Filter (for Receptionist, Admin) */}
             {canFilterByDoctor && (
-              <div className="flex items-center space-x-4 flex-wrap gap-2">
+              <div className="flex items-center gap-3">
                 <div className="flex items-center gap-2 text-gray-400">
                   <Users className="w-5 h-5" />
                   <span className="font-semibold">Doctor:</span>
@@ -394,7 +445,7 @@ export function Schedule() {
                 <select
                   value={filterDoctor}
                   onChange={(e) => setFilterDoctor(e.target.value)}
-                  className="bg-gray-900/50 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all duration-300 hover:border-gray-600"
+                  className="bg-gray-900/50 border border-gray-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all duration-300 hover:border-gray-600"
                 >
                   <option value="">All Doctors</option>
                   {doctors.map(doctor => (
@@ -405,6 +456,7 @@ export function Schedule() {
             )}
           </div>
         </div>
+        )}
 
         {/* New User Form (Admin only) */}
         {showNewUserForm && canManageUsers && (
@@ -582,7 +634,66 @@ export function Schedule() {
           </div>
         )}
 
-        {/* Appointments List */}
+        {/* User Management (Admin only) */}
+        {showUserManagement && canDeleteUsers && (
+          <div className="bg-gradient-to-br from-gray-900 to-gray-900/80 border border-gray-800/50 rounded-2xl p-8 mb-6 backdrop-blur-sm shadow-2xl animate-slide-up">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+                <UserCog className="w-6 h-6 text-purple-400" />
+                User Management
+              </h2>
+              <button
+                onClick={() => setShowUserManagement(false)}
+                className="bg-gray-800/50 hover:bg-gray-700/50 text-white px-6 py-2 rounded-xl font-semibold transition-all duration-300 border border-gray-700"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4">
+              {allUsers.map((u) => (
+                <div
+                  key={u.id}
+                  className="flex items-center justify-between bg-gray-800/50 border border-gray-700 rounded-xl p-5 hover:border-gray-600 transition-all duration-300"
+                >
+                  <div className="flex-1">
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center justify-center w-10 h-10 rounded-full bg-gradient-to-br from-purple-600 to-pink-600 text-white font-bold">
+                        {u.name.charAt(0).toUpperCase()}
+                      </div>
+                      <div>
+                        <h3 className="text-white font-semibold">{u.name}</h3>
+                        <p className="text-gray-400 text-sm">{u.email}</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <span className={`px-4 py-2 rounded-lg text-sm font-semibold ${
+                      u.role === 'admin' ? 'bg-red-500/20 text-red-300 border border-red-500/30' :
+                      u.role === 'doctor' ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' :
+                      u.role === 'receptionist' ? 'bg-green-500/20 text-green-300 border border-green-500/30' :
+                      'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                    }`}>
+                      {u.role.charAt(0).toUpperCase() + u.role.slice(1)}
+                    </span>
+                    {u.id !== user?.id && (
+                      <button
+                        onClick={() => handleDeleteUser(u.id, u.name)}
+                        className="flex items-center gap-2 bg-red-600/20 hover:bg-red-600/30 text-red-300 px-4 py-2 rounded-lg font-semibold transition-all duration-300 border border-red-600/30 hover:border-red-500"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        Delete
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Appointments List - Hide when creating user, appointment, or managing users */}
+        {!showNewUserForm && !showNewAppointmentForm && !showUserManagement && (
         <div className="space-y-5">
           {loading ? (
             <div className="bg-gradient-to-br from-gray-900 to-gray-900/80 border border-gray-800/50 rounded-2xl p-16 text-center backdrop-blur-sm shadow-2xl animate-slide-up">
@@ -612,6 +723,7 @@ export function Schedule() {
             </div>
           )}
         </div>
+        )}
       </div>
     </div>
   )

@@ -471,13 +471,20 @@ aws s3 rm s3://<bucket-name> --recursive
 aws s3 rb s3://<bucket-name>
 ```
 
+## Documentation
+
+All AWS documentation has been consolidated into two main files:
+
+- **📖 [../DEPLOY.md](../DEPLOY.md)** - Complete deployment guide
+- **📖 [../REFERENCE.md](../REFERENCE.md)** - All commands and troubleshooting
+
 ## Support
 
 For issues or questions:
-1. Check AWS_CLI_COMMANDS.md for useful commands
+1. Check [../REFERENCE.md](../REFERENCE.md) for commands and troubleshooting
 2. Review CloudFormation stack events
 3. Check systemd service logs
-4. Refer to AWS_ARCHITECTURE_GUIDE.md for architecture details
+4. Refer to [../AWS_ARCHITECTURE_GUIDE.md](../AWS_ARCHITECTURE_GUIDE.md) for architecture details
 
 ## Next Steps
 

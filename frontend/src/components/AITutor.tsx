@@ -152,23 +152,25 @@ export function AITutor() {
                     <div className="h-1 w-20 bg-gradient-to-r from-green-500 to-emerald-500 rounded-full"></div>
                   </div>
                 </div>
-                <p className="text-gray-300 leading-relaxed text-lg">{result.definition}</p>
+                <p className="text-gray-300 leading-relaxed text-lg whitespace-pre-line">{result.definition}</p>
               </div>
 
-              <div className="border-t border-gray-700/50 pt-5">
-                <h4 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-                  <span className="w-1.5 h-6 bg-gradient-to-b from-green-500 to-emerald-500 rounded-full"></span>
-                  Examples & Usage
-                </h4>
-                <ul className="space-y-3">
-                  {result.examples.map((example, index) => (
-                    <li key={index} className="flex items-start space-x-3 group/item">
-                      <span className="text-green-400 mt-1 text-xl group-hover/item:scale-125 transition-transform">•</span>
-                      <span className="text-gray-300 leading-relaxed">{example}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
+              {result.examples && result.examples.length > 0 && (
+                <div className="border-t border-gray-700/50 pt-5">
+                  <h4 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                    <span className="w-1.5 h-6 bg-gradient-to-b from-green-500 to-emerald-500 rounded-full"></span>
+                    Examples & Usage
+                  </h4>
+                  <ul className="space-y-3">
+                    {result.examples.map((example, index) => (
+                      <li key={index} className="flex items-start space-x-3 group/item">
+                        <span className="text-green-400 mt-1 text-xl group-hover/item:scale-125 transition-transform">•</span>
+                        <span className="text-gray-300 leading-relaxed">{example}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
 
               <div className="bg-gradient-to-r from-yellow-900/30 to-orange-900/30 border border-yellow-700/50 rounded-xl p-4 backdrop-blur-sm">
                 <p className="text-sm text-yellow-200 flex items-start gap-2">
