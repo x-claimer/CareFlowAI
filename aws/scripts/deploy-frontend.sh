@@ -10,7 +10,7 @@ set -e
 # Configuration
 S3_BUCKET="428207183791-careflowai-frontend"  # Your S3 bucket name
 CLOUDFRONT_DISTRIBUTION_ID="ELQ36TVX16I3O"  # Your CloudFront distribution ID
-API_URL="http://54.225.66.151"  # Your backend API URL (EC2 Elastic IP)
+API_URL="https://54-225-66-151.nip.io"  # Your backend API URL (HTTPS via nginx)
 REGION="us-east-1"
 # Override to point to a specific aws binary if needed.
 # If not provided, we try to pick a Linux binary even if PATH points to /mnt/c/...
