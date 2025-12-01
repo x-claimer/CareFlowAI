@@ -1,0 +1,368 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudWatch Monitoring, Alarms, and Dashboards for CareFlowAI'
+
+Parameters:
+  EnvironmentName:
+    Description: Environment name prefix
+    Type: String
+    Default: CareFlowAI
+
+  AutoScalingGroupName:
+    Description: Auto Scaling Group Name
+    Type: String
+
+  LoadBalancerFullName:
+    Description: Full name of the ALB (from console or outputs)
+    Type: String
+
+  TargetGroupFullName:
+    Description: Full name of the Target Group (from console or outputs)
+    Type: String
+
+  AlarmEmail:
+    Description: Email address for alarm notifications
+    Type: String
+    Default: admin@example.com
+
+Resources:
+  # SNS Topic for Alarms
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub ${EnvironmentName}-Alarms
+      DisplayName: CareFlowAI Monitoring Alarms
+      Subscription:
+        - Endpoint: !Ref AlarmEmail
+          Protocol: email
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-Alarms
+
+  # CloudWatch Log Groups
+  BackendLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /careflowai/backend
+      RetentionInDays: 30
+
+  ApplicationLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /careflowai/application
+      RetentionInDays: 7
+
+  # CloudWatch Alarms - ALB
+  ALBHighLatencyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${EnvironmentName}-ALB-High-Latency
+      AlarmDescription: Alert when ALB target response time is too high
+      MetricName: TargetResponseTime
+      Namespace: AWS/ApplicationELB
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 1.0
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !Ref LoadBalancerFullName
+      AlarmActions:
+        - !Ref AlarmTopic
+      TreatMissingData: notBreaching
+
+  ALBUnhealthyHostAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${EnvironmentName}-ALB-Unhealthy-Hosts
+      AlarmDescription: Alert when unhealthy host count is high
+      MetricName: UnHealthyHostCount
+      Namespace: AWS/ApplicationELB
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !Ref LoadBalancerFullName
+        - Name: TargetGroup
+          Value: !Ref TargetGroupFullName
+      AlarmActions:
+        - !Ref AlarmTopic
+      TreatMissingData: notBreaching
+
+  ALB5XXErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${EnvironmentName}-ALB-5XX-Errors
+      AlarmDescription: Alert when ALB 5XX error rate is high
+      MetricName: HTTPCode_Target_5XX_Count
+      Namespace: AWS/ApplicationELB
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !Ref LoadBalancerFullName
+      AlarmActions:
+        - !Ref AlarmTopic
+      TreatMissingData: notBreaching
+
+  # CloudWatch Alarms - Auto Scaling Group
+  ASGHighCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${EnvironmentName}-ASG-High-CPU
+      AlarmDescription: Alert when ASG average CPU is too high
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref AutoScalingGroupName
+      AlarmActions:
+        - !Ref AlarmTopic
+      TreatMissingData: notBreaching
+
+  ASGLowInstanceCountAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${EnvironmentName}-ASG-Low-Instance-Count
+      AlarmDescription: Alert when running instances drop below minimum
+      MetricName: GroupInServiceInstances
+      Namespace: AWS/AutoScaling
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 2
+      ComparisonOperator: LessThanThreshold
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref AutoScalingGroupName
+      AlarmActions:
+        - !Ref AlarmTopic
+      TreatMissingData: breaching
+
+  # Custom Metric Alarms (from CloudWatch Agent)
+  HighMemoryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${EnvironmentName}-High-Memory-Usage
+      AlarmDescription: Alert when memory usage is high
+      MetricName: MEM_USED
+      Namespace: CareFlowAI/Backend
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 85
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AlarmTopic
+      TreatMissingData: notBreaching
+
+  HighDiskUsageAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${EnvironmentName}-High-Disk-Usage
+      AlarmDescription: Alert when disk usage is high
+      MetricName: DISK_USED
+      Namespace: CareFlowAI/Backend
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AlarmTopic
+      TreatMissingData: notBreaching
+
+  # CloudWatch Dashboard
+  CareFlowAIDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub ${EnvironmentName}-Dashboard
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "properties": {
+                "metrics": [
+                  ["AWS/ApplicationELB", "RequestCount", {"stat": "Sum", "label": "Total Requests"}],
+                  [".", "HTTPCode_Target_2XX_Count", {"stat": "Sum", "label": "2XX Responses"}],
+                  [".", "HTTPCode_Target_4XX_Count", {"stat": "Sum", "label": "4XX Responses"}],
+                  [".", "HTTPCode_Target_5XX_Count", {"stat": "Sum", "label": "5XX Responses"}]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "ALB Request Metrics",
+                "period": 300,
+                "yAxis": {
+                  "left": {
+                    "min": 0
+                  }
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "properties": {
+                "metrics": [
+                  ["AWS/ApplicationELB", "TargetResponseTime", {"stat": "Average", "label": "Avg Response Time"}],
+                  ["...", {"stat": "p99", "label": "P99 Response Time"}]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "ALB Response Time",
+                "period": 300,
+                "yAxis": {
+                  "left": {
+                    "min": 0
+                  }
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "properties": {
+                "metrics": [
+                  ["AWS/ApplicationELB", "HealthyHostCount", {"stat": "Average", "label": "Healthy Hosts"}],
+                  [".", "UnHealthyHostCount", {"stat": "Average", "label": "Unhealthy Hosts"}]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Target Health",
+                "period": 60,
+                "yAxis": {
+                  "left": {
+                    "min": 0
+                  }
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "properties": {
+                "metrics": [
+                  ["AWS/AutoScaling", "GroupInServiceInstances", {"stat": "Average", "label": "In Service"}],
+                  [".", "GroupPendingInstances", {"stat": "Average", "label": "Pending"}],
+                  [".", "GroupTerminatingInstances", {"stat": "Average", "label": "Terminating"}]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Auto Scaling Group Instances",
+                "period": 60,
+                "yAxis": {
+                  "left": {
+                    "min": 0
+                  }
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "properties": {
+                "metrics": [
+                  ["AWS/EC2", "CPUUtilization", {"stat": "Average", "label": "Avg CPU"}],
+                  ["...", {"stat": "Maximum", "label": "Max CPU"}]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "EC2 CPU Utilization",
+                "period": 300,
+                "yAxis": {
+                  "left": {
+                    "min": 0,
+                    "max": 100
+                  }
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "properties": {
+                "metrics": [
+                  ["CareFlowAI/Backend", "MEM_USED", {"stat": "Average", "label": "Memory Used %"}],
+                  [".", "DISK_USED", {"stat": "Average", "label": "Disk Used %"}]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Memory and Disk Usage",
+                "period": 300,
+                "yAxis": {
+                  "left": {
+                    "min": 0,
+                    "max": 100
+                  }
+                }
+              }
+            },
+            {
+              "type": "log",
+              "properties": {
+                "query": "SOURCE '/careflowai/backend'\n| fields @timestamp, @message\n| filter @message like /ERROR/\n| sort @timestamp desc\n| limit 20",
+                "region": "${AWS::Region}",
+                "stacked": false,
+                "title": "Recent Error Logs",
+                "view": "table"
+              }
+            },
+            {
+              "type": "metric",
+              "properties": {
+                "metrics": [
+                  ["AWS/ApplicationELB", "ActiveConnectionCount", {"stat": "Sum", "label": "Active Connections"}],
+                  [".", "NewConnectionCount", {"stat": "Sum", "label": "New Connections"}]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "ALB Connection Metrics",
+                "period": 60
+              }
+            }
+          ]
+        }
+
+  # Composite Alarm for Critical System Issues
+  CriticalSystemAlarm:
+    Type: AWS::CloudWatch::CompositeAlarm
+    Properties:
+      AlarmName: !Sub ${EnvironmentName}-Critical-System-Alarm
+      AlarmDescription: Composite alarm for critical system issues
+      AlarmActions:
+        - !Ref AlarmTopic
+      AlarmRule: !Sub |
+        ALARM(${ALBUnhealthyHostAlarm}) OR
+        ALARM(${ASGLowInstanceCountAlarm}) OR
+        ALARM(${ALB5XXErrorAlarm})
+
+Outputs:
+  AlarmTopicArn:
+    Description: SNS Topic ARN for Alarms
+    Value: !Ref AlarmTopic
+    Export:
+      Name: !Sub ${EnvironmentName}-AlarmTopic-ARN
+
+  DashboardURL:
+    Description: CloudWatch Dashboard URL
+    Value: !Sub https://console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${EnvironmentName}-Dashboard
+
+  BackendLogGroupName:
+    Description: Backend Log Group Name
+    Value: !Ref BackendLogGroup
+    Export:
+      Name: !Sub ${EnvironmentName}-BackendLogGroup

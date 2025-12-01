@@ -1,0 +1,440 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Auto Scaling Group and Launch Template for CareFlowAI Backend'
+
+Parameters:
+  EnvironmentName:
+    Description: Environment name prefix
+    Type: String
+    Default: CareFlowAI
+
+  InstanceType:
+    Description: EC2 instance type
+    Type: String
+    Default: t3.small
+    AllowedValues:
+      - t3.small
+      - t3.medium
+      - t3.large
+    ConstraintDescription: Must be a valid EC2 instance type
+
+  KeyName:
+    Description: EC2 Key Pair for SSH access
+    Type: AWS::EC2::KeyPair::KeyName
+
+  VPCId:
+    Description: VPC ID
+    Type: String
+
+  PublicSubnet1:
+    Description: Public Subnet 1 ID
+    Type: String
+
+  PublicSubnet2:
+    Description: Public Subnet 2 ID
+    Type: String
+
+  BackendSecurityGroup:
+    Description: Backend Security Group ID
+    Type: String
+
+  TargetGroupArn:
+    Description: Target Group ARN for ALB
+    Type: String
+
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id'
+
+  MinSize:
+    Description: Minimum number of instances
+    Type: Number
+    Default: 1
+
+  MaxSize:
+    Description: Maximum number of instances
+    Type: Number
+    Default: 3
+
+  DesiredCapacity:
+    Description: Desired number of instances
+    Type: Number
+    Default: 1
+
+  MongoDBURL:
+    Description: MongoDB connection URL
+    Type: String
+    NoEcho: true
+
+  GeminiAPIKey:
+    Description: Google Gemini API Key
+    Type: String
+    NoEcho: true
+
+  SecretKey:
+    Description: JWT Secret Key
+    Type: String
+    NoEcho: true
+
+Resources:
+  # IAM Role for EC2 instances
+  EC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-ASG-EC2-Role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: CloudWatchLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                  - 'logs:DescribeLogStreams'
+                Resource: 'arn:aws:logs:*:*:*'
+        - PolicyName: SSMParameters
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'ssm:GetParameter'
+                  - 'ssm:GetParameters'
+                  - 'ssm:GetParametersByPath'
+                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${EnvironmentName}/*'
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-ASG-EC2-Role
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub ${EnvironmentName}-ASG-EC2-Profile
+      Roles:
+        - !Ref EC2Role
+
+  # Launch Template
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub ${EnvironmentName}-Backend-LT
+      LaunchTemplateData:
+        ImageId: !Ref LatestAmiId
+        InstanceType: !Ref InstanceType
+        KeyName: !Ref KeyName
+        IamInstanceProfile:
+          Arn: !GetAtt EC2InstanceProfile.Arn
+        SecurityGroupIds:
+          - !Ref BackendSecurityGroup
+        BlockDeviceMappings:
+          - DeviceName: /dev/sda1
+            Ebs:
+              VolumeSize: 30
+              VolumeType: gp3
+              DeleteOnTermination: true
+              Encrypted: true
+        Monitoring:
+          Enabled: true
+        MetadataOptions:
+          HttpTokens: required
+          HttpPutResponseHopLimit: 1
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub ${EnvironmentName}-Backend-ASG-Instance
+              - Key: Environment
+                Value: !Ref EnvironmentName
+              - Key: ManagedBy
+                Value: AutoScaling
+          - ResourceType: volume
+            Tags:
+              - Key: Name
+                Value: !Sub ${EnvironmentName}-Backend-ASG-Volume
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            set -e
+            exec > >(tee /var/log/user-data.log)
+            exec 2>&1
+
+            echo "=== Starting CareFlowAI Backend Setup ==="
+            date
+
+            # Update system
+            apt-get update
+            apt-get upgrade -y
+
+            # Install CloudWatch agent
+            wget https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb
+            dpkg -i amazon-cloudwatch-agent.deb
+
+            # Configure CloudWatch agent
+            cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'EOF'
+            {
+              "logs": {
+                "logs_collected": {
+                  "files": {
+                    "collect_list": [
+                      {
+                        "file_path": "/var/log/careflowai/app.log",
+                        "log_group_name": "/careflowai/backend",
+                        "log_stream_name": "{instance_id}/app.log",
+                        "timezone": "UTC"
+                      },
+                      {
+                        "file_path": "/var/log/careflowai/error.log",
+                        "log_group_name": "/careflowai/backend",
+                        "log_stream_name": "{instance_id}/error.log",
+                        "timezone": "UTC"
+                      },
+                      {
+                        "file_path": "/var/log/user-data.log",
+                        "log_group_name": "/careflowai/backend",
+                        "log_stream_name": "{instance_id}/user-data.log",
+                        "timezone": "UTC"
+                      }
+                    ]
+                  }
+                }
+              },
+              "metrics": {
+                "namespace": "CareFlowAI/Backend",
+                "metrics_collected": {
+                  "cpu": {
+                    "measurement": [
+                      {"name": "cpu_usage_idle", "rename": "CPU_IDLE", "unit": "Percent"},
+                      {"name": "cpu_usage_iowait", "rename": "CPU_IOWAIT", "unit": "Percent"}
+                    ],
+                    "metrics_collection_interval": 60,
+                    "totalcpu": false
+                  },
+                  "disk": {
+                    "measurement": [
+                      {"name": "used_percent", "rename": "DISK_USED", "unit": "Percent"}
+                    ],
+                    "metrics_collection_interval": 60,
+                    "resources": ["*"]
+                  },
+                  "mem": {
+                    "measurement": [
+                      {"name": "mem_used_percent", "rename": "MEM_USED", "unit": "Percent"}
+                    ],
+                    "metrics_collection_interval": 60
+                  },
+                  "netstat": {
+                    "measurement": [
+                      {"name": "tcp_established", "rename": "TCP_ESTABLISHED", "unit": "Count"}
+                    ],
+                    "metrics_collection_interval": 60
+                  }
+                }
+              }
+            }
+            EOF
+
+            # Start CloudWatch agent
+            /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+              -a fetch-config \
+              -m ec2 \
+              -s \
+              -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+
+            # Install basic tools
+            apt-get install -y git curl wget vim htop nginx
+
+            # Install Python 3.11+
+            apt-get install -y python3 python3-pip python3-venv build-essential libssl-dev libffi-dev python3-dev
+
+            # Create app directory and log directory
+            mkdir -p /opt/careflowai
+            mkdir -p /var/log/careflowai
+            chown ubuntu:ubuntu /opt/careflowai
+            chown ubuntu:ubuntu /var/log/careflowai
+
+            # Clone repository or copy application code
+            # In production, you would pull from a private Git repo or S3 bucket
+            cd /opt/careflowai
+
+            # Create Python virtual environment
+            python3 -m venv venv
+            source venv/bin/activate
+
+            # Install Python dependencies
+            cat > requirements.txt <<'EOF'
+            fastapi==0.115.0
+            uvicorn[standard]==0.32.0
+            python-multipart==0.0.12
+            python-jose[cryptography]==3.3.0
+            bcrypt==3.2.2
+            passlib[bcrypt]==1.7.4
+            pydantic==2.9.0
+            pydantic-settings==2.5.0
+            python-dotenv==1.0.1
+            email-validator==2.1.1
+            motor==3.6.0
+            pymongo==4.9.1
+            google-generativeai==0.8.3
+            Pillow==10.4.0
+            EOF
+
+            pip install -r requirements.txt
+
+            # Create environment file
+            cat > .env <<EOF
+            MONGODB_URL=${MongoDBURL}
+            DATABASE_NAME=careflowai
+            SECRET_KEY=${SecretKey}
+            ALGORITHM=HS256
+            ACCESS_TOKEN_EXPIRE_MINUTES=30
+            GEMINI_API_KEY=${GeminiAPIKey}
+            GEMINI_REPORT_ANALYSIS_MODEL=gemini-2.5-flash
+            GEMINI_TUTOR_MODEL=gemini-2.5-flash
+            EOF
+
+            # Create systemd service
+            cat > /etc/systemd/system/careflowai.service <<'EOF'
+            [Unit]
+            Description=CareFlowAI FastAPI Backend
+            After=network.target
+
+            [Service]
+            Type=simple
+            User=ubuntu
+            WorkingDirectory=/opt/careflowai
+            Environment="PATH=/opt/careflowai/venv/bin"
+            ExecStart=/opt/careflowai/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+            Restart=always
+            RestartSec=10
+            StandardOutput=append:/var/log/careflowai/app.log
+            StandardError=append:/var/log/careflowai/error.log
+
+            [Install]
+            WantedBy=multi-user.target
+            EOF
+
+            # Configure Nginx as reverse proxy
+            cat > /etc/nginx/sites-available/careflowai <<'EOF'
+            server {
+                listen 80;
+                server_name _;
+
+                location / {
+                    proxy_pass http://127.0.0.1:8000;
+                    proxy_set_header Host $host;
+                    proxy_set_header X-Real-IP $remote_addr;
+                    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                    proxy_set_header X-Forwarded-Proto $scheme;
+                }
+
+                location /health {
+                    proxy_pass http://127.0.0.1:8000/health;
+                    access_log off;
+                }
+            }
+            EOF
+
+            ln -sf /etc/nginx/sites-available/careflowai /etc/nginx/sites-enabled/
+            rm -f /etc/nginx/sites-enabled/default
+
+            # Restart Nginx
+            systemctl restart nginx
+
+            # Note: Application will start when code is deployed
+            # systemctl enable careflowai
+            # systemctl start careflowai
+
+            echo "=== CareFlowAI Backend Setup Complete ==="
+            date
+
+      TagSpecifications:
+        - ResourceType: launch-template
+          Tags:
+            - Key: Name
+              Value: !Sub ${EnvironmentName}-Backend-LT
+
+  # Auto Scaling Group
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub ${EnvironmentName}-Backend-ASG
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      MinSize: !Ref MinSize
+      MaxSize: !Ref MaxSize
+      DesiredCapacity: !Ref DesiredCapacity
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 300
+      VPCZoneIdentifier:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      TargetGroupARNs:
+        - !Ref TargetGroupArn
+      MetricsCollection:
+        - Granularity: 1Minute
+          Metrics:
+            - GroupInServiceInstances
+            - GroupPendingInstances
+            - GroupTerminatingInstances
+            - GroupTotalInstances
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-Backend-ASG-Instance
+          PropagateAtLaunch: true
+        - Key: Environment
+          Value: !Ref EnvironmentName
+          PropagateAtLaunch: true
+
+  # Scaling Policies
+  ScaleUpPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: 70.0
+
+  # Scale based on ALB Request Count
+  RequestCountScalingPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ALBRequestCountPerTarget
+          ResourceLabel: !Join
+            - '/'
+            - - !Select [1, !Split ['/', !Ref TargetGroupArn]]
+              - !Select [2, !Split ['/', !Ref TargetGroupArn]]
+              - !Select [3, !Split ['/', !Ref TargetGroupArn]]
+        TargetValue: 1000
+
+Outputs:
+  AutoScalingGroupName:
+    Description: Auto Scaling Group Name
+    Value: !Ref AutoScalingGroup
+    Export:
+      Name: !Sub ${EnvironmentName}-ASG-Name
+
+  LaunchTemplateId:
+    Description: Launch Template ID
+    Value: !Ref LaunchTemplate
+    Export:
+      Name: !Sub ${EnvironmentName}-LT-ID
