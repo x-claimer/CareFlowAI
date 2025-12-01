@@ -232,54 +232,41 @@ Is there anything specific you'd like to know more about?"""
             model = genai.GenerativeModel(GEMINI_TUTOR_MODEL)
 
             # Create a detailed prompt for medical term explanation
-            prompt = f"""You are a medical tutor AI assistant. Provide a comprehensive yet easy-to-understand explanation of the medical term or health concept: "{query}"
+            prompt = f"""You are a medical tutor AI assistant. Explain the medical term or health concept: "{query}"
 
-Please structure your response in the following format:
+Provide a clear, comprehensive explanation in 2-4 paragraphs that a patient can understand.
 
-DEFINITION:
-Provide a clear, concise definition in 2-3 sentences that a patient can understand. Use simple language while maintaining medical accuracy.
+Guidelines:
+- Use simple, friendly language while maintaining medical accuracy
+- Explain what the term means and why it's important
+- Include relevant context about causes, symptoms, or significance
+- Mention related concepts naturally within the paragraphs
+- Do NOT use markdown formatting (no asterisks, bold, italics, bullets, or numbered lists)
+- Write in flowing paragraphs only
+- Be conversational and patient-focused
 
-EXAMPLES:
-Provide 3 practical examples:
-1. A sentence showing how this term is commonly used in a medical context
-2. Related medical terms or concepts the patient should know
-3. When to seek medical help or what actions to take related to this condition
-
-Keep the tone friendly, informative, and patient-focused. Avoid overly technical jargon unless necessary."""
+Write your response as plain text paragraphs without any special formatting."""
 
             # Generate response
             response = model.generate_content(prompt)
             response_text = response.text
 
-            # Parse the response to extract definition and examples
-            definition = ""
-            examples = []
+            # Clean up the response text
+            import re
 
-            # Split response into sections
-            if "DEFINITION:" in response_text and "EXAMPLES:" in response_text:
-                parts = response_text.split("EXAMPLES:")
-                definition_part = parts[0].replace("DEFINITION:", "").strip()
-                examples_part = parts[1].strip()
+            # Remove markdown formatting (**, *, _)
+            cleaned_text = re.sub(r'\*\*|\*|_', '', response_text)
 
-                definition = definition_part
+            # Remove any remaining section headers like "DEFINITION:" or "EXAMPLES:"
+            cleaned_text = re.sub(r'(DEFINITION|EXAMPLES):\s*', '', cleaned_text, flags=re.IGNORECASE)
 
-                # Split examples by newlines and filter out empty lines
-                example_lines = [line.strip() for line in examples_part.split('\n') if line.strip()]
-                examples = example_lines[:3] if len(example_lines) >= 3 else example_lines
-            else:
-                # If format not followed, use whole response as definition
-                lines = response_text.split('\n')
-                definition = '\n'.join(lines[:3])
-                examples = lines[3:6] if len(lines) > 3 else ["See definition above"]
+            # Clean up extra whitespace
+            cleaned_text = re.sub(r'\n\s*\n\s*\n', '\n\n', cleaned_text).strip()
 
             return {
                 "term": query,
-                "definition": definition,
-                "examples": examples if examples else [
-                    "Medical information retrieved successfully",
-                    "Consult healthcare provider for personalized advice",
-                    "Keep track of your symptoms and health changes"
-                ],
+                "definition": cleaned_text,
+                "examples": [],  # No examples, just the definition paragraph
             }
 
         except Exception as e:

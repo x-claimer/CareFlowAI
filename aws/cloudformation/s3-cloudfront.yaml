@@ -17,7 +17,7 @@ Resources:
   FrontendBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub ${EnvironmentName}-frontend-${AWS::AccountId}
+      BucketName: !Sub ${AWS::AccountId}-careflowai-frontend
       PublicAccessBlockConfiguration:
         BlockPublicAcls: false
         BlockPublicPolicy: false

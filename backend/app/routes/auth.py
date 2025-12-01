@@ -195,11 +195,17 @@ async def get_users(
 async def create_user(
     user_data: UserCreate,
     db: AsyncIOMotorDatabase = Depends(get_db),
-    current_user: dict = Depends(require_role("admin")),
+    current_user: dict = Depends(get_current_user),
 ):
     """
-    Create a new user with any role (admin only)
+    Create a new user with any role (admin and receptionist can create users)
     """
+    # Only admin and receptionist can create users
+    if current_user["role"] not in ["admin", "receptionist"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admins and receptionists can create users",
+        )
     # Check if user already exists
     existing_user = await db.users.find_one({"email": user_data.email})
 
@@ -276,3 +282,47 @@ async def update_user_role(
         name=updated_user["name"],
         role=updated_user["role"],
     )
+
+
+@router.delete("/users/{user_id}")
+async def delete_user(
+    user_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    current_user: dict = Depends(require_role("admin")),
+):
+    """
+    Delete a user (admin only)
+    """
+    if not ObjectId.is_valid(user_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user ID",
+        )
+
+    # Prevent admin from deleting themselves
+    if str(current_user["_id"]) == user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete your own account",
+        )
+
+    user = await db.users.find_one({"_id": ObjectId(user_id)})
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    # Delete the user
+    await db.users.delete_one({"_id": ObjectId(user_id)})
+
+    # Also delete all appointments for this user
+    await db.appointments.delete_many({
+        "$or": [
+            {"patient_id": user_id},
+            {"doctor_id": user_id}
+        ]
+    })
+
+    return {"success": True, "message": f"User {user['name']} deleted successfully"}

@@ -375,10 +375,27 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ---
 
+## 📚 Documentation
+
+### Quick Links
+- **🚀 [DEPLOY.md](DEPLOY.md)** - Complete AWS deployment guide (start here!)
+- **📖 [REFERENCE.md](REFERENCE.md)** - All AWS commands and troubleshooting
+- **🏗️ [AWS_ARCHITECTURE_GUIDE.md](AWS_ARCHITECTURE_GUIDE.md)** - System architecture details
+- **🐳 [DOCKER_KUBERNETES_SETUP.md](DOCKER_KUBERNETES_SETUP.md)** - Alternative deployment
+- **🤖 [AI_SERVICES_OVERVIEW.md](AI_SERVICES_OVERVIEW.md)** - AI features documentation
+
+### Getting Started
+1. **Local Development**: Follow the [Installation](#installation) section above
+2. **AWS Deployment**: Read [DEPLOY.md](DEPLOY.md) for step-by-step instructions
+3. **Daily Operations**: Use [REFERENCE.md](REFERENCE.md) for common commands
+
+---
+
 ## 📞 Support & Contact
 
-- **Documentation**: See `/backend/README.md` and `/backend/API_TESTING.md`
-- **API Docs**: http://localhost:8000/docs (when running)
+- **Deployment Guide**: [DEPLOY.md](DEPLOY.md)
+- **Command Reference**: [REFERENCE.md](REFERENCE.md)
+- **API Docs**: http://localhost:8000/docs (local) or http://YOUR-IP/docs (AWS)
 - **Issues**: Please report bugs and feature requests via GitHub Issues
 
 ---

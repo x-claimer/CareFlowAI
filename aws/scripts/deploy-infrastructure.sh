@@ -10,8 +10,11 @@ set -e  # Exit on error
 # Configuration
 STACK_NAME_PREFIX="CareFlowAI"
 REGION="us-east-1"
-KEY_NAME="EC2KeyForCareFlowAI"  # Set your EC2 key pair name
+KEY_NAME="CareFlowAI-Key-New"  # Set your EC2 key pair name
 INSTANCE_TYPE="t2.micro"  # Options: t2.micro, t3.small, t3.medium
+# Override to point to a specific aws binary if needed.
+# If not provided, we try to pick a Linux binary even if PATH points to /mnt/c/...
+AWS_CLI="${AWS_CLI:-}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -28,7 +31,7 @@ print_message() {
 
 # Function to check if stack exists
 stack_exists() {
-    aws cloudformation describe-stacks \
+    "$AWS_CLI" cloudformation describe-stacks \
         --stack-name $1 \
         --region $REGION \
         &> /dev/null
@@ -39,7 +42,7 @@ wait_for_stack() {
     STACK_NAME=$1
     print_message "$YELLOW" "Waiting for stack $STACK_NAME to complete..."
 
-    aws cloudformation wait stack-create-complete \
+    "$AWS_CLI" cloudformation wait stack-create-complete \
         --stack-name $STACK_NAME \
         --region $REGION
 
@@ -51,9 +54,26 @@ wait_for_stack() {
     fi
 }
 
-# Check if AWS CLI is installed
-if ! command -v aws &> /dev/null; then
-    print_message "$RED" "AWS CLI is not installed. Please install it first."
+# Resolve AWS CLI path, preferring a Linux binary over a Windows path
+if [ -z "$AWS_CLI" ]; then
+    if command -v /usr/bin/aws >/dev/null 2>&1; then
+        AWS_CLI="/usr/bin/aws"
+    else
+        AWS_CLI="$(command -v aws || true)"
+    fi
+fi
+
+if [[ "$AWS_CLI" == /mnt/c/* ]]; then
+    print_message "$YELLOW" "Detected Windows AWS CLI path ($AWS_CLI); trying Linux aws instead"
+    if command -v /usr/bin/aws >/dev/null 2>&1; then
+        AWS_CLI="/usr/bin/aws"
+    elif command -v aws >/dev/null 2>&1; then
+        AWS_CLI="$(command -v aws)"
+    fi
+fi
+
+if [ -z "$AWS_CLI" ] || ! command -v "$AWS_CLI" >/dev/null 2>&1; then
+    print_message "$RED" "AWS CLI not found. Install AWS CLI v2 for Linux or set AWS_CLI to the correct binary."
     exit 1
 fi
 
@@ -71,12 +91,12 @@ VPC_STACK_NAME="${STACK_NAME_PREFIX}-VPC"
 
 if stack_exists $VPC_STACK_NAME; then
     print_message "$YELLOW" "VPC stack already exists. Updating..."
-    aws cloudformation update-stack \
+    "$AWS_CLI" cloudformation update-stack \
         --stack-name $VPC_STACK_NAME \
         --template-body file://aws/cloudformation/vpc.yaml \
         --region $REGION
 else
-    aws cloudformation create-stack \
+    "$AWS_CLI" cloudformation create-stack \
         --stack-name $VPC_STACK_NAME \
         --template-body file://aws/cloudformation/vpc.yaml \
         --region $REGION
@@ -85,7 +105,7 @@ else
 fi
 
 # Get VPC ID
-VPC_ID=$(aws cloudformation describe-stacks \
+VPC_ID=$("$AWS_CLI" cloudformation describe-stacks \
     --stack-name $VPC_STACK_NAME \
     --region $REGION \
     --query 'Stacks[0].Outputs[?OutputKey==`VPC`].OutputValue' \
@@ -99,13 +119,13 @@ SG_STACK_NAME="${STACK_NAME_PREFIX}-SecurityGroups"
 
 if stack_exists $SG_STACK_NAME; then
     print_message "$YELLOW" "Security Groups stack already exists. Updating..."
-    aws cloudformation update-stack \
+    "$AWS_CLI" cloudformation update-stack \
         --stack-name $SG_STACK_NAME \
         --template-body file://aws/cloudformation/security-groups.yaml \
         --parameters ParameterKey=VPCId,ParameterValue=$VPC_ID \
         --region $REGION
 else
-    aws cloudformation create-stack \
+    "$AWS_CLI" cloudformation create-stack \
         --stack-name $SG_STACK_NAME \
         --template-body file://aws/cloudformation/security-groups.yaml \
         --parameters ParameterKey=VPCId,ParameterValue=$VPC_ID \
@@ -115,7 +135,7 @@ else
 fi
 
 # Get Security Group ID
-SG_ID=$(aws cloudformation describe-stacks \
+SG_ID=$("$AWS_CLI" cloudformation describe-stacks \
     --stack-name $SG_STACK_NAME \
     --region $REGION \
     --query 'Stacks[0].Outputs[?OutputKey==`BackendSecurityGroup`].OutputValue' \
@@ -124,7 +144,7 @@ SG_ID=$(aws cloudformation describe-stacks \
 print_message "$GREEN" "Security Group ID: $SG_ID"
 
 # Get Subnet ID
-SUBNET_ID=$(aws cloudformation describe-stacks \
+SUBNET_ID=$("$AWS_CLI" cloudformation describe-stacks \
     --stack-name $VPC_STACK_NAME \
     --region $REGION \
     --query 'Stacks[0].Outputs[?OutputKey==`PublicSubnet1`].OutputValue' \
@@ -139,7 +159,7 @@ EC2_STACK_NAME="${STACK_NAME_PREFIX}-Backend"
 if stack_exists $EC2_STACK_NAME; then
     print_message "$YELLOW" "EC2 stack already exists. Skipping..."
 else
-    aws cloudformation create-stack \
+    "$AWS_CLI" cloudformation create-stack \
         --stack-name $EC2_STACK_NAME \
         --template-body file://aws/cloudformation/ec2-backend.yaml \
         --parameters \
@@ -155,7 +175,7 @@ else
 fi
 
 # Get Elastic IP
-ELASTIC_IP=$(aws cloudformation describe-stacks \
+ELASTIC_IP=$("$AWS_CLI" cloudformation describe-stacks \
     --stack-name $EC2_STACK_NAME \
     --region $REGION \
     --query 'Stacks[0].Outputs[?OutputKey==`ElasticIP`].OutputValue' \
@@ -170,7 +190,7 @@ S3_STACK_NAME="${STACK_NAME_PREFIX}-Frontend"
 if stack_exists $S3_STACK_NAME; then
     print_message "$YELLOW" "S3/CloudFront stack already exists. Skipping..."
 else
-    aws cloudformation create-stack \
+    "$AWS_CLI" cloudformation create-stack \
         --stack-name $S3_STACK_NAME \
         --template-body file://aws/cloudformation/s3-cloudfront.yaml \
         --region $REGION
@@ -179,13 +199,13 @@ else
 fi
 
 # Get S3 Bucket Name and CloudFront Domain
-BUCKET_NAME=$(aws cloudformation describe-stacks \
+BUCKET_NAME=$("$AWS_CLI" cloudformation describe-stacks \
     --stack-name $S3_STACK_NAME \
     --region $REGION \
     --query 'Stacks[0].Outputs[?OutputKey==`FrontendBucketName`].OutputValue' \
     --output text)
 
-CLOUDFRONT_DOMAIN=$(aws cloudformation describe-stacks \
+CLOUDFRONT_DOMAIN=$("$AWS_CLI" cloudformation describe-stacks \
     --stack-name $S3_STACK_NAME \
     --region $REGION \
     --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDomainName`].OutputValue' \

@@ -1,4 +1,4 @@
-import { Mail, Phone, Shield, AlertTriangle, Heart } from 'lucide-react'
+import { Mail, Phone, Shield, AlertTriangle } from 'lucide-react'
 
 export function Footer() {
   return (

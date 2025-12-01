@@ -30,6 +30,8 @@ app.add_middleware(
         "http://localhost:3000",  # Alternative frontend port
         "http://127.0.0.1:5173",
         "http://127.0.0.1:3000",
+        "https://d1bf7p1xlxrfne.cloudfront.net",  # Production CloudFront
+        "http://428207183791-careflowai-frontend.s3-website-us-east-1.amazonaws.com",  # S3 website
     ],
     allow_credentials=True,
     allow_methods=["*"],
