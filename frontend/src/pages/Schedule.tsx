@@ -274,19 +274,33 @@ export function Schedule() {
         <div className="flex items-center justify-between mb-10 animate-fade-in">
           <div>
             <div className="flex items-center gap-3 mb-2">
-              <div className="p-2 bg-blue-500/10 rounded-lg">
-                <CalendarIcon className="w-8 h-8 text-blue-400" />
+              <div className={`p-2 ${showUserManagement ? 'bg-purple-500/10' : showNewUserForm ? 'bg-green-500/10' : 'bg-blue-500/10'} rounded-lg`}>
+                {showUserManagement ? (
+                  <UserCog className="w-8 h-8 text-purple-400" />
+                ) : showNewUserForm ? (
+                  <UserPlus className="w-8 h-8 text-green-400" />
+                ) : (
+                  <CalendarIcon className="w-8 h-8 text-blue-400" />
+                )}
               </div>
               <h1 className="text-4xl font-bold text-white flex items-center gap-2">
-                Appointment Schedule
+                {showUserManagement ? 'User Management' : showNewUserForm ? 'Create New User' : 'Appointment Schedule'}
                 <Sparkles className="w-6 h-6 text-yellow-400 animate-pulse" />
               </h1>
             </div>
             <p className="text-gray-400 ml-14">
-              {user?.role === 'patient' && 'View your appointments and communicate with your healthcare team'}
-              {user?.role === 'doctor' && 'View appointments for your patients across all doctors'}
-              {user?.role === 'receptionist' && 'Manage all patient appointments and schedules'}
-              {user?.role === 'admin' && 'Full access to manage appointments and user roles'}
+              {showUserManagement
+                ? 'Manage all registered users and their roles'
+                : showNewUserForm
+                ? 'Add a new user to the system with specific role permissions'
+                : user?.role === 'patient'
+                ? 'View your appointments and communicate with your healthcare team'
+                : user?.role === 'doctor'
+                ? 'View appointments for your patients across all doctors'
+                : user?.role === 'receptionist'
+                ? 'Manage all patient appointments and schedules'
+                : 'Full access to manage appointments and user roles'
+              }
             </p>
           </div>
 
