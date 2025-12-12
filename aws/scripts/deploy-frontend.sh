@@ -34,28 +34,55 @@ if [ -z "$S3_BUCKET" ] || [ -z "$API_URL" ]; then
     exit 1
 fi
 
+# Resolve AWS CLI path
 if [ -z "$AWS_CLI" ]; then
-    # Prefer a non-WSL Windows path
-    if command -v /usr/bin/aws >/dev/null 2>&1; then
-        AWS_CLI="/usr/bin/aws"
+    # Check if we're on Git Bash/MINGW (Windows)
+    if [[ "$(uname -s)" == MINGW* ]] || [[ "$(uname -s)" == MSYS* ]]; then
+        # On Git Bash/Windows, try to find AWS CLI
+        # First check if aws.exe is in PATH (most reliable)
+        if command -v aws.exe >/dev/null 2>&1; then
+            AWS_CLI="aws.exe"
+        elif command -v aws >/dev/null 2>&1; then
+            AWS_CLI="aws"
+        # Then check standard Windows installation paths
+        elif [ -f "/c/Program Files/Amazon/AWSCLIV2/aws.exe" ]; then
+            AWS_CLI="/c/Program Files/Amazon/AWSCLIV2/aws.exe"
+        elif [ -f "/c/Program Files/Amazon/AWSCLIV2/aws" ]; then
+            AWS_CLI="/c/Program Files/Amazon/AWSCLIV2/aws"
+        fi
     else
-        AWS_CLI="$(command -v aws || true)"
+        # On Linux/WSL, try Linux paths first
+        if [ -x "/usr/local/bin/aws" ]; then
+            AWS_CLI="/usr/local/bin/aws"
+        elif [ -x "/usr/bin/aws" ]; then
+            AWS_CLI="/usr/bin/aws"
+        elif [ -x "/bin/aws" ]; then
+            AWS_CLI="/bin/aws"
+        else
+            # Fallback to command -v but exclude Windows paths on WSL
+            TEMP_AWS="$(command -v aws 2>/dev/null || true)"
+            if [[ "$TEMP_AWS" != /mnt/c/* ]] && [ -n "$TEMP_AWS" ]; then
+                AWS_CLI="$TEMP_AWS"
+            fi
+        fi
     fi
 fi
 
-if [[ "$AWS_CLI" == /mnt/c/* ]]; then
-    print_message "$YELLOW" "Detected Windows AWS CLI path ($AWS_CLI); trying Linux aws instead"
-    if command -v /usr/bin/aws >/dev/null 2>&1; then
-        AWS_CLI="/usr/bin/aws"
-    elif command -v aws >/dev/null 2>&1; then
-        AWS_CLI="$(command -v aws)"
+# Final validation
+if [ -z "$AWS_CLI" ]; then
+    print_message "$RED" "AWS CLI not found. Please install AWS CLI v2."
+    if [[ "$(uname -s)" == MINGW* ]] || [[ "$(uname -s)" == MSYS* ]]; then
+        print_message "$YELLOW" "Download from: https://awscli.amazonaws.com/AWSCLIV2.msi"
+    else
+        print_message "$YELLOW" "Install with:"
+        print_message "$YELLOW" "  curl \"https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip\" -o \"awscliv2.zip\""
+        print_message "$YELLOW" "  unzip awscliv2.zip"
+        print_message "$YELLOW" "  sudo ./aws/install"
     fi
-fi
-
-if [ -z "$AWS_CLI" ] || ! command -v "$AWS_CLI" >/dev/null 2>&1; then
-    print_message "$RED" "AWS CLI not found. Install AWS CLI v2 for Linux or set AWS_CLI to the correct binary."
     exit 1
 fi
+
+print_message "$GREEN" "Using AWS CLI: $AWS_CLI"
 
 print_message "$GREEN" "Starting frontend deployment..."
 

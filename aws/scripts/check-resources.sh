@@ -29,7 +29,7 @@ echo ""
 ################################################################################
 # 1. Check CloudFormation Stacks
 ################################################################################
-echo -e "${YELLOW}[1/5] CloudFormation Stacks:${NC}"
+echo -e "${YELLOW}[1/4] CloudFormation Stacks:${NC}"
 echo ""
 
 STACKS=$(aws cloudformation list-stacks \
@@ -54,7 +54,7 @@ echo ""
 ################################################################################
 # 2. Check EC2 Instances
 ################################################################################
-echo -e "${YELLOW}[2/5] EC2 Instances:${NC}"
+echo -e "${YELLOW}[2/4] EC2 Instances:${NC}"
 echo ""
 
 INSTANCES=$(aws ec2 describe-instances \
@@ -100,76 +100,41 @@ fi
 echo ""
 
 ################################################################################
-# 3. Check DocumentDB Clusters
+# 3. Check API Gateway
 ################################################################################
-echo -e "${YELLOW}[3/5] DocumentDB Clusters:${NC}"
+echo -e "${YELLOW}[3/4] API Gateway:${NC}"
 echo ""
 
-DOCDB=$(aws docdb describe-db-clusters \
+API_GATEWAYS=$(aws apigatewayv2 get-apis \
     --region "$AWS_REGION" \
-    --query 'DBClusters[*].[DBClusterIdentifier,Status,Endpoint,Port]' \
+    --query 'Items[?contains(Name, `CareFlow`) || contains(Name, `careflow`)].[Name,ApiId,ApiEndpoint,ProtocolType]' \
     --output table 2>/dev/null)
 
-if [ -n "$DOCDB" ] && [ "$DOCDB" != "" ]; then
-    echo -e "${GREEN}DocumentDB clusters found:${NC}"
-    echo "$DOCDB"
+if [ -n "$API_GATEWAYS" ] && [ "$API_GATEWAYS" != "" ]; then
+    echo -e "${GREEN}API Gateways found:${NC}"
+    echo "$API_GATEWAYS"
+    echo ""
+
+    # Get VPC Links
+    VPC_LINKS=$(aws apigatewayv2 get-vpc-links \
+        --region "$AWS_REGION" \
+        --query 'Items[?contains(Name, `CareFlow`) || contains(Name, `careflow`)].[Name,VpcLinkId,VpcLinkStatus]' \
+        --output table 2>/dev/null)
+
+    if [ -n "$VPC_LINKS" ]; then
+        echo -e "${CYAN}VPC Links:${NC}"
+        echo "$VPC_LINKS"
+    fi
 else
-    echo -e "${YELLOW}⚠ No DocumentDB clusters found (you might be using MongoDB Atlas)${NC}"
+    echo -e "${YELLOW}⚠ No API Gateways found${NC}"
 fi
 
 echo ""
 
 ################################################################################
-# 4. Check EKS Clusters
+# 4. Check S3 Buckets and CloudFront
 ################################################################################
-echo -e "${YELLOW}[4/5] EKS Clusters:${NC}"
-echo ""
-
-EKS_CLUSTERS=$(aws eks list-clusters \
-    --region "$AWS_REGION" \
-    --query 'clusters[]' \
-    --output text 2>/dev/null)
-
-if [ -n "$EKS_CLUSTERS" ]; then
-    echo -e "${GREEN}EKS clusters found:${NC}"
-    for cluster in $EKS_CLUSTERS; do
-        echo ""
-        echo -e "${CYAN}Cluster: $cluster${NC}"
-        aws eks describe-cluster \
-            --name "$cluster" \
-            --region "$AWS_REGION" \
-            --query 'cluster.{Status:status,Version:version,Endpoint:endpoint}' \
-            --output table
-
-        # Check node groups
-        NODE_GROUPS=$(aws eks list-nodegroups \
-            --cluster-name "$cluster" \
-            --region "$AWS_REGION" \
-            --query 'nodegroups[]' \
-            --output text)
-
-        if [ -n "$NODE_GROUPS" ]; then
-            echo -e "${CYAN}Node Groups:${NC}"
-            for ng in $NODE_GROUPS; do
-                aws eks describe-nodegroup \
-                    --cluster-name "$cluster" \
-                    --nodegroup-name "$ng" \
-                    --region "$AWS_REGION" \
-                    --query 'nodegroup.{Name:nodegroupName,Status:status,DesiredSize:scalingConfig.desiredSize,MinSize:scalingConfig.minSize,MaxSize:scalingConfig.maxSize}' \
-                    --output table
-            done
-        fi
-    done
-else
-    echo -e "${YELLOW}⚠ No EKS clusters found${NC}"
-fi
-
-echo ""
-
-################################################################################
-# 5. Check S3 Buckets and CloudFront
-################################################################################
-echo -e "${YELLOW}[5/5] S3 Buckets & CloudFront:${NC}"
+echo -e "${YELLOW}[4/4] S3 Buckets & CloudFront:${NC}"
 echo ""
 
 # Check S3 buckets with CareFlow in name
