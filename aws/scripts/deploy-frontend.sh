@@ -7,13 +7,23 @@
 
 set -e
 
-# Configuration
-S3_BUCKET="428207183791-careflowai-frontend"  # Your S3 bucket name
-CLOUDFRONT_DISTRIBUTION_ID="ELQ36TVX16I3O"  # Your CloudFront distribution ID
-API_URL="https://54-225-66-151.nip.io"  # Your backend API URL (HTTPS via nginx)
-REGION="us-east-1"
-# Override to point to a specific aws binary if needed.
-# If not provided, we try to pick a Linux binary even if PATH points to /mnt/c/...
+# Determine PROJECT_ROOT
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
+
+# Load environment variables from .env file
+if [ -f "$PROJECT_ROOT/aws/.env" ]; then
+    export $(grep -v '^#' "$PROJECT_ROOT/aws/.env" | grep -v '^$' | xargs)
+    echo "Loaded configuration from $PROJECT_ROOT/aws/.env"
+else
+    echo "Warning: .env file not found at $PROJECT_ROOT/aws/.env"
+fi
+
+# Configuration with defaults from .env or hardcoded fallbacks
+S3_BUCKET="${S3_BUCKET:-428207183791-careflowai-frontend}"
+CLOUDFRONT_DISTRIBUTION_ID="${CLOUDFRONT_DISTRIBUTION_ID:-ELQ36TVX16I3O}"
+API_URL="${API_URL:-https://54-225-66-151.nip.io}"
+REGION="${REGION:-us-east-1}"
 AWS_CLI="${AWS_CLI:-}"
 
 # Colors
@@ -87,7 +97,7 @@ print_message "$GREEN" "Using AWS CLI: $AWS_CLI"
 print_message "$GREEN" "Starting frontend deployment..."
 
 # Navigate to frontend directory
-cd frontend
+cd "$PROJECT_ROOT/frontend"
 
 # Create production environment file
 print_message "$YELLOW" "Creating production environment file..."

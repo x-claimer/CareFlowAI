@@ -17,22 +17,34 @@
 
 set -e
 
+# Determine PROJECT_ROOT
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
+
+# Load environment variables from .env file
+if [ -f "$PROJECT_ROOT/aws/.env" ]; then
+    export $(grep -v '^#' "$PROJECT_ROOT/aws/.env" | grep -v '^$' | xargs)
+    echo "Loaded configuration from $PROJECT_ROOT/aws/.env"
+else
+    echo "Warning: .env file not found at $PROJECT_ROOT/aws/.env"
+fi
+
 # Color codes for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-# Configuration - UPDATE THESE VALUES TO MATCH YOUR DEPLOYMENT
-AWS_REGION="us-east-1"
-EKS_CLUSTER_NAME="careflowai-cluster"
-ECR_REPOSITORY_FRONTEND="careflowai-frontend"
-ECR_REPOSITORY_BACKEND="careflowai-backend"
-MONGODB_CLUSTER_NAME="careflowai-mongodb"
-VPC_NAME="careflowai-vpc"
-LOAD_BALANCER_NAME="careflowai-alb"
-S3_BUCKET_NAME="careflowai-static-assets"
-IAM_ROLE_PREFIX="careflowai"
+# Configuration with defaults from .env or hardcoded fallbacks
+AWS_REGION="${AWS_REGION:-us-east-1}"
+EKS_CLUSTER_NAME="${EKS_CLUSTER_NAME:-careflowai-cluster}"
+ECR_REPOSITORY_FRONTEND="${ECR_REPOSITORY_FRONTEND:-careflowai-frontend}"
+ECR_REPOSITORY_BACKEND="${ECR_REPOSITORY_BACKEND:-careflowai-backend}"
+MONGODB_CLUSTER_NAME="${MONGODB_CLUSTER_NAME:-careflowai-mongodb}"
+VPC_NAME="${VPC_NAME:-careflowai-vpc}"
+LOAD_BALANCER_NAME="${LOAD_BALANCER_NAME:-careflowai-alb}"
+S3_BUCKET_NAME="${S3_BUCKET_NAME:-careflowai-static-assets}"
+IAM_ROLE_PREFIX="${IAM_ROLE_PREFIX:-careflowai}"
 
 echo -e "${RED}═══════════════════════════════════════════════════════════════${NC}"
 echo -e "${RED}         AWS CAREFLOWAI RESOURCE CLEANUP SCRIPT                ${NC}"

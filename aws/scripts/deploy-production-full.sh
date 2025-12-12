@@ -17,6 +17,18 @@
 
 set -e
 
+# Determine PROJECT_ROOT early
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
+
+# Load environment variables from .env file
+if [ -f "$PROJECT_ROOT/aws/.env" ]; then
+    export $(grep -v '^#' "$PROJECT_ROOT/aws/.env" | grep -v '^$' | xargs)
+    echo "Loaded configuration from $PROJECT_ROOT/aws/.env"
+else
+    echo "Warning: .env file not found at $PROJECT_ROOT/aws/.env"
+fi
+
 # Color codes for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -29,10 +41,8 @@ echo -e "${GREEN}    CareFlowAI Full Production Deployment Script               
 echo -e "${GREEN}═══════════════════════════════════════════════════════════════${NC}"
 echo ""
 
-# Configuration
-AWS_REGION="us-east-1"
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
+# Configuration with defaults from .env or hardcoded fallbacks
+AWS_REGION="${AWS_REGION:-us-east-1}"
 AWS_CLI="${AWS_CLI:-}"
 
 # Resolve AWS CLI path
@@ -91,32 +101,54 @@ export AWS_CLI
 ################################################################################
 echo -e "${BLUE}[0/8] Collecting deployment parameters...${NC}"
 echo ""
+echo -e "${YELLOW}Press Enter to use default values from .env file, or type new values to override${NC}"
+echo ""
 
-# Prompt for required parameters
-read -p "Enter EC2 Key Pair Name(default: CareFlowAI-Key-New.pem): " KEY_NAME
-KEY_NAME=${KEY_NAME:-CareFlowAI-Key-New.pem}
-read -p "Enter Instance Type (default: t2.micro): " INSTANCE_TYPE
-INSTANCE_TYPE=${INSTANCE_TYPE:-t2.micro}
+# Load defaults from .env or use hardcoded fallbacks
+DEFAULT_KEY_NAME="${KEY_NAME:-CareFlowAI-Key-New}"
+DEFAULT_INSTANCE_TYPE="${INSTANCE_TYPE:-t2.micro}"
+DEFAULT_MONGODB_URL="${MONGODB_URL:-}"
+DEFAULT_GEMINI_API_KEY="${GEMINI_API_KEY:-}"
+DEFAULT_SSH_KEY_PATH="${SSH_KEY_PATH:-}"
+DEFAULT_MIN_SIZE="${MIN_SIZE:-1}"
+DEFAULT_MAX_SIZE="${MAX_SIZE:-3}"
+DEFAULT_DESIRED_CAPACITY="${DESIRED_CAPACITY:-1}"
+DEFAULT_DEPLOY_MONITORING="${DEPLOY_CLOUDWATCH_MONITORING:-no}"
+DEFAULT_ALARM_EMAIL="${ALARM_EMAIL:-maur1301@umd.edu}"
 
-read -p "Enter MongoDB URL: " MONGODB_URL
-read -p "Enter Gemini API Key: " GEMINI_API_KEY
-read -p "Enter path to SSH key (.pem file): " SSH_KEY_PATH
+# Prompt for required parameters with defaults from .env
+read -p "Enter EC2 Key Pair Name (default: $DEFAULT_KEY_NAME): " INPUT_KEY_NAME
+KEY_NAME=${INPUT_KEY_NAME:-$DEFAULT_KEY_NAME}
+
+read -p "Enter Instance Type (default: $DEFAULT_INSTANCE_TYPE): " INPUT_INSTANCE_TYPE
+INSTANCE_TYPE=${INPUT_INSTANCE_TYPE:-$DEFAULT_INSTANCE_TYPE}
+
+read -p "Enter MongoDB URL (default: ${DEFAULT_MONGODB_URL:0:50}...): " INPUT_MONGODB_URL
+MONGODB_URL=${INPUT_MONGODB_URL:-$DEFAULT_MONGODB_URL}
+
+read -p "Enter Gemini API Key (default: ${DEFAULT_GEMINI_API_KEY:0:20}...): " INPUT_GEMINI_API_KEY
+GEMINI_API_KEY=${INPUT_GEMINI_API_KEY:-$DEFAULT_GEMINI_API_KEY}
+
+read -p "Enter path to SSH key .pem file (default: $DEFAULT_SSH_KEY_PATH): " INPUT_SSH_KEY_PATH
+SSH_KEY_PATH=${INPUT_SSH_KEY_PATH:-$DEFAULT_SSH_KEY_PATH}
 
 # ASG Configuration
-read -p "Enter Min Size for ASG (default: 1): " MIN_SIZE
-MIN_SIZE=${MIN_SIZE:-1}
-read -p "Enter Max Size for ASG (default: 3): " MAX_SIZE
-MAX_SIZE=${MAX_SIZE:-3}
-read -p "Enter Desired Capacity for ASG (default: 1): " DESIRED_CAPACITY
-DESIRED_CAPACITY=${DESIRED_CAPACITY:-1}
+read -p "Enter Min Size for ASG (default: $DEFAULT_MIN_SIZE): " INPUT_MIN_SIZE
+MIN_SIZE=${INPUT_MIN_SIZE:-$DEFAULT_MIN_SIZE}
+
+read -p "Enter Max Size for ASG (default: $DEFAULT_MAX_SIZE): " INPUT_MAX_SIZE
+MAX_SIZE=${INPUT_MAX_SIZE:-$DEFAULT_MAX_SIZE}
+
+read -p "Enter Desired Capacity for ASG (default: $DEFAULT_DESIRED_CAPACITY): " INPUT_DESIRED_CAPACITY
+DESIRED_CAPACITY=${INPUT_DESIRED_CAPACITY:-$DEFAULT_DESIRED_CAPACITY}
 
 # Optional CloudWatch Monitoring
-read -p "Deploy CloudWatch Monitoring? (yes/no, default: no): " DEPLOY_MONITORING
-DEPLOY_MONITORING=${DEPLOY_MONITORING:-no}
+read -p "Deploy CloudWatch Monitoring? (yes/no, default: $DEFAULT_DEPLOY_MONITORING): " INPUT_DEPLOY_MONITORING
+DEPLOY_MONITORING=${INPUT_DEPLOY_MONITORING:-$DEFAULT_DEPLOY_MONITORING}
 
 if [ "$DEPLOY_MONITORING" = "yes" ]; then
-    read -p "Enter email for CloudWatch alarms(default: maur1301@umd.edu): " ALARM_EMAIL
-    ALARM_EMAIL=${ALARM_EMAIL:-maur1301@umd.edu}
+    read -p "Enter email for CloudWatch alarms (default: $DEFAULT_ALARM_EMAIL): " INPUT_ALARM_EMAIL
+    ALARM_EMAIL=${INPUT_ALARM_EMAIL:-$DEFAULT_ALARM_EMAIL}
 fi
 
 echo ""

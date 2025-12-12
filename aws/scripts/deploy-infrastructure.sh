@@ -7,14 +7,25 @@
 
 set -e  # Exit on error
 
-# Configuration
-STACK_NAME_PREFIX="CareFlowAI"
-REGION="us-east-1"
-KEY_NAME="CareFlowAI-Key-New"  # Set your EC2 key pair name
-INSTANCE_TYPE="t2.micro"  # Options: t2.micro, t3.small, t3.medium
-DEPLOY_API_GATEWAY="${DEPLOY_API_GATEWAY:-no}"  # Set to 'yes' to deploy API Gateway
-# Override to point to a specific aws binary if needed.
-# If not provided, we try to pick a Linux binary even if PATH points to /mnt/c/...
+# Determine PROJECT_ROOT
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
+
+# Load environment variables from .env file
+if [ -f "$PROJECT_ROOT/aws/.env" ]; then
+    export $(grep -v '^#' "$PROJECT_ROOT/aws/.env" | grep -v '^$' | xargs)
+    echo "Loaded configuration from $PROJECT_ROOT/aws/.env"
+else
+    echo "Warning: .env file not found at $PROJECT_ROOT/aws/.env"
+    echo "Using default values or environment variables"
+fi
+
+# Configuration with defaults from .env or hardcoded fallbacks
+STACK_NAME_PREFIX="${STACK_NAME_PREFIX:-CareFlowAI}"
+REGION="${REGION:-us-east-1}"
+KEY_NAME="${KEY_NAME:-CareFlowAI-Key-New}"
+INSTANCE_TYPE="${INSTANCE_TYPE:-t2.micro}"
+DEPLOY_API_GATEWAY="${DEPLOY_API_GATEWAY:-yes}"
 AWS_CLI="${AWS_CLI:-}"  # Will be auto-detected if not set
 
 # Colors for output
@@ -83,7 +94,7 @@ update_or_create_stack() {
         print_message "$YELLOW" "Stack $STACK_NAME already exists. Updating..."
         UPDATE_OUTPUT=$("$AWS_CLI" cloudformation update-stack \
             --stack-name $STACK_NAME \
-            --template-body file://$TEMPLATE_FILE \
+            --template-body file://"$TEMPLATE_FILE" \
             "${EXTRA_PARAMS[@]}" \
             --region $REGION 2>&1)
 
@@ -103,7 +114,7 @@ update_or_create_stack() {
         print_message "$YELLOW" "Creating stack $STACK_NAME..."
         "$AWS_CLI" cloudformation create-stack \
             --stack-name $STACK_NAME \
-            --template-body file://$TEMPLATE_FILE \
+            --template-body file://"$TEMPLATE_FILE" \
             "${EXTRA_PARAMS[@]}" \
             --region $REGION
 
@@ -173,7 +184,8 @@ print_message "$GREEN" "Starting CareFlowAI infrastructure deployment..."
 print_message "$YELLOW" "Deploying VPC..."
 VPC_STACK_NAME="${STACK_NAME_PREFIX}-VPC"
 
-update_or_create_stack $VPC_STACK_NAME "aws/cloudformation/vpc.yaml"
+
+update_or_create_stack $VPC_STACK_NAME "$PROJECT_ROOT/aws/cloudformation/vpc.yaml"
 
 # Get VPC ID
 VPC_ID=$("$AWS_CLI" cloudformation describe-stacks \
@@ -188,7 +200,7 @@ print_message "$GREEN" "VPC ID: $VPC_ID"
 print_message "$YELLOW" "Deploying Security Groups..."
 SG_STACK_NAME="${STACK_NAME_PREFIX}-SecurityGroups"
 
-update_or_create_stack $SG_STACK_NAME "aws/cloudformation/security-groups.yaml" \
+update_or_create_stack $SG_STACK_NAME "$PROJECT_ROOT/aws/cloudformation/security-groups.yaml" \
     --parameters ParameterKey=VPCId,ParameterValue=$VPC_ID
 
 # Get Security Group ID
@@ -218,7 +230,7 @@ if stack_exists $EC2_STACK_NAME; then
 else
     "$AWS_CLI" cloudformation create-stack \
         --stack-name $EC2_STACK_NAME \
-        --template-body file://aws/cloudformation/ec2-backend.yaml \
+        --template-body file://"$PROJECT_ROOT"/aws/cloudformation/ec2-backend.yaml \
         --parameters \
             ParameterKey=KeyName,ParameterValue=$KEY_NAME \
             ParameterKey=InstanceType,ParameterValue=$INSTANCE_TYPE \
@@ -249,7 +261,7 @@ if stack_exists $S3_STACK_NAME; then
 else
     "$AWS_CLI" cloudformation create-stack \
         --stack-name $S3_STACK_NAME \
-        --template-body file://aws/cloudformation/s3-cloudfront.yaml \
+        --template-body file://"$PROJECT_ROOT"/aws/cloudformation/s3-cloudfront.yaml \
         --region $REGION
 
     wait_for_stack $S3_STACK_NAME
@@ -298,7 +310,7 @@ if [[ "$DEPLOY_API_GATEWAY" =~ ^[Yy][Ee][Ss]$|^[Yy]$ ]]; then
             --query 'Stacks[0].Outputs[?OutputKey==`PublicSubnet2`].OutputValue' \
             --output text)
 
-        update_or_create_stack $API_STACK_NAME "aws/cloudformation/api-gateway.yaml" \
+        update_or_create_stack $API_STACK_NAME "$PROJECT_ROOT/aws/cloudformation/api-gateway.yaml" \
             --parameters \
                 ParameterKey=VPCId,ParameterValue=$VPC_ID \
                 ParameterKey=PublicSubnet1,ParameterValue=$SUBNET_ID \

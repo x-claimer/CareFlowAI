@@ -7,9 +7,21 @@
 
 set -e
 
-# Configuration
-STACK_NAME_PREFIX="CareFlowAI"
-REGION="us-east-1"
+# Determine PROJECT_ROOT
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
+
+# Load environment variables from .env file
+if [ -f "$PROJECT_ROOT/aws/.env" ]; then
+    export $(grep -v '^#' "$PROJECT_ROOT/aws/.env" | grep -v '^$' | xargs)
+    echo "Loaded configuration from $PROJECT_ROOT/aws/.env"
+else
+    echo "Warning: .env file not found at $PROJECT_ROOT/aws/.env"
+fi
+
+# Configuration with defaults from .env or hardcoded fallbacks
+STACK_NAME_PREFIX="${STACK_NAME_PREFIX:-CareFlowAI}"
+REGION="${REGION:-us-east-1}"
 AWS_CLI="${AWS_CLI:-}"
 
 # Colors for output
@@ -164,7 +176,7 @@ if stack_exists $API_STACK_NAME; then
     print_message "$YELLOW" "API Gateway stack already exists. Updating..."
     "$AWS_CLI" cloudformation update-stack \
         --stack-name $API_STACK_NAME \
-        --template-body file://aws/cloudformation/api-gateway.yaml \
+        --template-body file://"$PROJECT_ROOT"/aws/cloudformation/api-gateway.yaml \
         --parameters \
             ParameterKey=VPCId,ParameterValue=$VPC_ID \
             ParameterKey=PublicSubnet1,ParameterValue=$PUBLIC_SUBNET_1 \
@@ -182,7 +194,7 @@ if stack_exists $API_STACK_NAME; then
 else
     "$AWS_CLI" cloudformation create-stack \
         --stack-name $API_STACK_NAME \
-        --template-body file://aws/cloudformation/api-gateway.yaml \
+        --template-body file://"$PROJECT_ROOT"/aws/cloudformation/api-gateway.yaml \
         --parameters \
             ParameterKey=VPCId,ParameterValue=$VPC_ID \
             ParameterKey=PublicSubnet1,ParameterValue=$PUBLIC_SUBNET_1 \
