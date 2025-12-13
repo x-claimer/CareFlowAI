@@ -198,6 +198,12 @@ Outputs:
     Export:
       Name: !Sub ${EnvironmentName}-ALB-HostedZoneID
 
+  HTTPListenerArn:
+    Description: HTTP Listener ARN
+    Value: !Ref HTTPListener
+    Export:
+      Name: !Sub ${EnvironmentName}-HTTPListener-ARN
+
   BackendTargetGroup:
     Description: Backend Target Group ARN
     Value: !Ref BackendTargetGroup

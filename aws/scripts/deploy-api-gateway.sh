@@ -11,6 +11,12 @@ set -e
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
+# Convert to Windows path if on Git Bash/MINGW
+if [[ "$(uname -s)" == MINGW* ]] || [[ "$(uname -s)" == MSYS* ]]; then
+    # Convert /e/path to E:/path format for AWS CLI
+    PROJECT_ROOT=$(echo "$PROJECT_ROOT" | sed 's|^/\([a-z]\)/|\U\1:/|')
+fi
+
 # Load environment variables from .env file
 if [ -f "$PROJECT_ROOT/aws/.env" ]; then
     export $(grep -v '^#' "$PROJECT_ROOT/aws/.env" | grep -v '^$' | xargs)
@@ -43,6 +49,15 @@ stack_exists() {
         --stack-name $1 \
         --region $REGION \
         &> /dev/null
+}
+
+# Function to get stack status
+get_stack_status() {
+    "$AWS_CLI" cloudformation describe-stacks \
+        --stack-name $1 \
+        --region $REGION \
+        --query 'Stacks[0].StackStatus' \
+        --output text 2>/dev/null
 }
 
 # Function to wait for stack completion
@@ -173,25 +188,17 @@ print_message "$YELLOW" "Deploying API Gateway stack..."
 API_STACK_NAME="${STACK_NAME_PREFIX}-APIGateway"
 
 if stack_exists $API_STACK_NAME; then
-    print_message "$YELLOW" "API Gateway stack already exists. Updating..."
-    "$AWS_CLI" cloudformation update-stack \
-        --stack-name $API_STACK_NAME \
-        --template-body file://"$PROJECT_ROOT"/aws/cloudformation/api-gateway.yaml \
-        --parameters \
-            ParameterKey=VPCId,ParameterValue=$VPC_ID \
-            ParameterKey=PublicSubnet1,ParameterValue=$PUBLIC_SUBNET_1 \
-            ParameterKey=PublicSubnet2,ParameterValue=$PUBLIC_SUBNET_2 \
-            ParameterKey=LoadBalancerArn,ParameterValue=$ALB_ARN \
-            ParameterKey=LoadBalancerDNS,ParameterValue=$ALB_DNS \
-        --region $REGION \
-        --capabilities CAPABILITY_IAM
+    STACK_STATUS=$(get_stack_status $API_STACK_NAME)
+    print_message "$YELLOW" "API Gateway stack already exists with status: $STACK_STATUS"
 
-    print_message "$YELLOW" "Waiting for stack update to complete..."
-    "$AWS_CLI" cloudformation wait stack-update-complete \
-        --stack-name $API_STACK_NAME \
-        --region $REGION
-    print_message "$GREEN" "Stack updated successfully!"
+    if [ "$STACK_STATUS" = "CREATE_COMPLETE" ] || [ "$STACK_STATUS" = "UPDATE_COMPLETE" ]; then
+        print_message "$GREEN" "✓ Using existing API Gateway stack"
+    else
+        print_message "$RED" "API Gateway stack is in $STACK_STATUS state. Please check and fix manually."
+        exit 1
+    fi
 else
+    print_message "$YELLOW" "Creating API Gateway stack..."
     "$AWS_CLI" cloudformation create-stack \
         --stack-name $API_STACK_NAME \
         --template-body file://"$PROJECT_ROOT"/aws/cloudformation/api-gateway.yaml \

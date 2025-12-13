@@ -7,8 +7,8 @@ Parameters:
     Type: String
     Default: CareFlowAI
 
-  LoadBalancerArn:
-    Description: ARN of the Application Load Balancer
+  LoadBalancerListenerArn:
+    Description: ARN of the Application Load Balancer HTTP Listener
     Type: String
 
   LoadBalancerDNS:

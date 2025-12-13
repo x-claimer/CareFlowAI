@@ -21,6 +21,12 @@ set -e
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
+# Convert to Windows path if on Git Bash/MINGW
+if [[ "$(uname -s)" == MINGW* ]] || [[ "$(uname -s)" == MSYS* ]]; then
+    # Convert /e/path to E:/path format for AWS CLI
+    PROJECT_ROOT=$(echo "$PROJECT_ROOT" | sed 's|^/\([a-z]\)/|\U\1:/|')
+fi
+
 # Load environment variables from .env file
 if [ -f "$PROJECT_ROOT/aws/.env" ]; then
     export $(grep -v '^#' "$PROJECT_ROOT/aws/.env" | grep -v '^$' | xargs)
@@ -97,61 +103,44 @@ echo -e "${GREEN}Using AWS CLI: $AWS_CLI${NC}"
 export AWS_CLI
 
 ################################################################################
-# Step 0: Collect User Inputs
+# Helper Functions
 ################################################################################
-echo -e "${BLUE}[0/8] Collecting deployment parameters...${NC}"
+
+# Function to check if stack exists
+stack_exists() {
+    "$AWS_CLI" cloudformation describe-stacks \
+        --stack-name $1 \
+        --region "$AWS_REGION" \
+        &> /dev/null
+}
+
+# Function to get stack status
+get_stack_status() {
+    "$AWS_CLI" cloudformation describe-stacks \
+        --stack-name $1 \
+        --region "$AWS_REGION" \
+        --query 'Stacks[0].StackStatus' \
+        --output text 2>/dev/null
+}
+
+################################################################################
+# Step 0: Load Configuration from .env
+################################################################################
+echo -e "${BLUE}[0/8] Loading deployment parameters from .env...${NC}"
 echo ""
-echo -e "${YELLOW}Press Enter to use default values from .env file, or type new values to override${NC}"
-echo ""
 
-# Load defaults from .env or use hardcoded fallbacks
-DEFAULT_KEY_NAME="${KEY_NAME:-CareFlowAI-Key-New}"
-DEFAULT_INSTANCE_TYPE="${INSTANCE_TYPE:-t2.micro}"
-DEFAULT_MONGODB_URL="${MONGODB_URL:-}"
-DEFAULT_GEMINI_API_KEY="${GEMINI_API_KEY:-}"
-DEFAULT_SSH_KEY_PATH="${SSH_KEY_PATH:-}"
-DEFAULT_MIN_SIZE="${MIN_SIZE:-1}"
-DEFAULT_MAX_SIZE="${MAX_SIZE:-3}"
-DEFAULT_DESIRED_CAPACITY="${DESIRED_CAPACITY:-1}"
-DEFAULT_DEPLOY_MONITORING="${DEPLOY_CLOUDWATCH_MONITORING:-no}"
-DEFAULT_ALARM_EMAIL="${ALARM_EMAIL:-maur1301@umd.edu}"
+# Use values from .env or hardcoded fallbacks
+KEY_NAME="${KEY_NAME:-CareFlowAI-Key-New}"
+INSTANCE_TYPE="${INSTANCE_TYPE:-t2.micro}"
+MONGODB_URL="${MONGODB_URL:-}"
+GEMINI_API_KEY="${GEMINI_API_KEY:-}"
+SSH_KEY_PATH="${SSH_KEY_PATH:-}"
+MIN_SIZE="${MIN_SIZE:-1}"
+MAX_SIZE="${MAX_SIZE:-3}"
+DESIRED_CAPACITY="${DESIRED_CAPACITY:-1}"
+DEPLOY_MONITORING="${DEPLOY_CLOUDWATCH_MONITORING:-no}"
+ALARM_EMAIL="${ALARM_EMAIL:-maur1301@umd.edu}"
 
-# Prompt for required parameters with defaults from .env
-read -p "Enter EC2 Key Pair Name (default: $DEFAULT_KEY_NAME): " INPUT_KEY_NAME
-KEY_NAME=${INPUT_KEY_NAME:-$DEFAULT_KEY_NAME}
-
-read -p "Enter Instance Type (default: $DEFAULT_INSTANCE_TYPE): " INPUT_INSTANCE_TYPE
-INSTANCE_TYPE=${INPUT_INSTANCE_TYPE:-$DEFAULT_INSTANCE_TYPE}
-
-read -p "Enter MongoDB URL (default: ${DEFAULT_MONGODB_URL:0:50}...): " INPUT_MONGODB_URL
-MONGODB_URL=${INPUT_MONGODB_URL:-$DEFAULT_MONGODB_URL}
-
-read -p "Enter Gemini API Key (default: ${DEFAULT_GEMINI_API_KEY:0:20}...): " INPUT_GEMINI_API_KEY
-GEMINI_API_KEY=${INPUT_GEMINI_API_KEY:-$DEFAULT_GEMINI_API_KEY}
-
-read -p "Enter path to SSH key .pem file (default: $DEFAULT_SSH_KEY_PATH): " INPUT_SSH_KEY_PATH
-SSH_KEY_PATH=${INPUT_SSH_KEY_PATH:-$DEFAULT_SSH_KEY_PATH}
-
-# ASG Configuration
-read -p "Enter Min Size for ASG (default: $DEFAULT_MIN_SIZE): " INPUT_MIN_SIZE
-MIN_SIZE=${INPUT_MIN_SIZE:-$DEFAULT_MIN_SIZE}
-
-read -p "Enter Max Size for ASG (default: $DEFAULT_MAX_SIZE): " INPUT_MAX_SIZE
-MAX_SIZE=${INPUT_MAX_SIZE:-$DEFAULT_MAX_SIZE}
-
-read -p "Enter Desired Capacity for ASG (default: $DEFAULT_DESIRED_CAPACITY): " INPUT_DESIRED_CAPACITY
-DESIRED_CAPACITY=${INPUT_DESIRED_CAPACITY:-$DEFAULT_DESIRED_CAPACITY}
-
-# Optional CloudWatch Monitoring
-read -p "Deploy CloudWatch Monitoring? (yes/no, default: $DEFAULT_DEPLOY_MONITORING): " INPUT_DEPLOY_MONITORING
-DEPLOY_MONITORING=${INPUT_DEPLOY_MONITORING:-$DEFAULT_DEPLOY_MONITORING}
-
-if [ "$DEPLOY_MONITORING" = "yes" ]; then
-    read -p "Enter email for CloudWatch alarms (default: $DEFAULT_ALARM_EMAIL): " INPUT_ALARM_EMAIL
-    ALARM_EMAIL=${INPUT_ALARM_EMAIL:-$DEFAULT_ALARM_EMAIL}
-fi
-
-echo ""
 echo -e "${GREEN}Configuration Summary:${NC}"
 echo "  AWS Region: $AWS_REGION"
 echo "  Key Pair: $KEY_NAME"
@@ -162,12 +151,8 @@ echo "  Gemini API Key: ${GEMINI_API_KEY:0:10}..."
 echo "  SSH Key: $SSH_KEY_PATH"
 echo "  CloudWatch Monitoring: $DEPLOY_MONITORING"
 echo ""
-
-read -p "Proceed with deployment? (yes/no): " CONFIRM
-if [ "$CONFIRM" != "yes" ]; then
-    echo -e "${YELLOW}Deployment cancelled.${NC}"
-    exit 0
-fi
+echo -e "${GREEN}Proceeding with deployment using values from .env file...${NC}"
+echo ""
 
 # Generate JWT Secret
 JWT_SECRET=$(openssl rand -hex 32)
@@ -208,7 +193,7 @@ echo "Extracting CloudFormation outputs..."
 VPC_ID=$("$AWS_CLI" cloudformation describe-stacks \
     --stack-name CareFlowAI-VPC \
     --region "$AWS_REGION" \
-    --query 'Stacks[0].Outputs[?OutputKey==`VPCId`].OutputValue' \
+    --query 'Stacks[0].Outputs[?OutputKey==`VPC`].OutputValue' \
     --output text)
 
 SUBNET1_ID=$("$AWS_CLI" cloudformation describe-stacks \
@@ -232,7 +217,7 @@ SECURITY_GROUP_ID=$("$AWS_CLI" cloudformation describe-stacks \
 S3_BUCKET=$("$AWS_CLI" cloudformation describe-stacks \
     --stack-name CareFlowAI-Frontend \
     --region "$AWS_REGION" \
-    --query 'Stacks[0].Outputs[?OutputKey==`S3BucketName`].OutputValue' \
+    --query 'Stacks[0].Outputs[?OutputKey==`FrontendBucketName`].OutputValue' \
     --output text)
 
 CLOUDFRONT_DISTRIBUTION_ID=$("$AWS_CLI" cloudformation describe-stacks \
@@ -261,19 +246,33 @@ echo ""
 echo -e "${BLUE}[2/8] Deploying Application Load Balancer...${NC}"
 echo ""
 
-"$AWS_CLI" cloudformation create-stack \
-    --stack-name CareFlowAI-ALB \
-    --template-body file://"$PROJECT_ROOT"/aws/cloudformation/alb.yaml \
-    --parameters \
-        ParameterKey=VPCId,ParameterValue="$VPC_ID" \
-        ParameterKey=PublicSubnet1,ParameterValue="$SUBNET1_ID" \
-        ParameterKey=PublicSubnet2,ParameterValue="$SUBNET2_ID" \
-    --region "$AWS_REGION"
+if stack_exists CareFlowAI-ALB; then
+    STACK_STATUS=$(get_stack_status CareFlowAI-ALB)
+    echo -e "${YELLOW}ALB stack already exists with status: $STACK_STATUS${NC}"
 
-echo "Waiting for ALB stack creation (this may take 5-10 minutes)..."
-"$AWS_CLI" cloudformation wait stack-create-complete \
-    --stack-name CareFlowAI-ALB \
-    --region "$AWS_REGION"
+    if [ "$STACK_STATUS" = "CREATE_COMPLETE" ] || [ "$STACK_STATUS" = "UPDATE_COMPLETE" ]; then
+        echo -e "${GREEN}✓ Using existing ALB stack${NC}"
+    else
+        echo -e "${RED}ALB stack is in $STACK_STATUS state. Please check and fix manually.${NC}"
+        exit 1
+    fi
+else
+    "$AWS_CLI" cloudformation create-stack \
+        --stack-name CareFlowAI-ALB \
+        --template-body file://"$PROJECT_ROOT"/aws/cloudformation/alb.yaml \
+        --parameters \
+            ParameterKey=VPCId,ParameterValue="$VPC_ID" \
+            ParameterKey=PublicSubnet1,ParameterValue="$SUBNET1_ID" \
+            ParameterKey=PublicSubnet2,ParameterValue="$SUBNET2_ID" \
+        --region "$AWS_REGION"
+
+    echo "Waiting for ALB stack creation (this may take 5-10 minutes)..."
+    "$AWS_CLI" cloudformation wait stack-create-complete \
+        --stack-name CareFlowAI-ALB \
+        --region "$AWS_REGION"
+
+    echo -e "${GREEN}✓ ALB stack created${NC}"
+fi
 
 # Extract ALB outputs
 ALB_ARN=$("$AWS_CLI" cloudformation describe-stacks \
@@ -291,7 +290,7 @@ ALB_DNS=$("$AWS_CLI" cloudformation describe-stacks \
 TARGET_GROUP_ARN=$("$AWS_CLI" cloudformation describe-stacks \
     --stack-name CareFlowAI-ALB \
     --region "$AWS_REGION" \
-    --query 'Stacks[0].Outputs[?OutputKey==`TargetGroupArn`].OutputValue' \
+    --query 'Stacks[0].Outputs[?OutputKey==`BackendTargetGroup`].OutputValue' \
     --output text)
 
 BACKEND_SG_ID=$("$AWS_CLI" cloudformation describe-stacks \
@@ -311,30 +310,45 @@ echo ""
 echo -e "${BLUE}[3/8] Deploying Auto Scaling Group...${NC}"
 echo ""
 
-"$AWS_CLI" cloudformation create-stack \
-    --stack-name CareFlowAI-ASG \
-    --template-body file://"$PROJECT_ROOT"/aws/cloudformation/asg.yaml \
-    --parameters \
-        ParameterKey=KeyName,ParameterValue="$KEY_NAME" \
-        ParameterKey=InstanceType,ParameterValue="$INSTANCE_TYPE" \
-        ParameterKey=VPCId,ParameterValue="$VPC_ID" \
-        ParameterKey=PublicSubnet1,ParameterValue="$SUBNET1_ID" \
-        ParameterKey=PublicSubnet2,ParameterValue="$SUBNET2_ID" \
-        ParameterKey=BackendSecurityGroup,ParameterValue="$BACKEND_SG_ID" \
-        ParameterKey=TargetGroupArn,ParameterValue="$TARGET_GROUP_ARN" \
-        ParameterKey=MongoDBURL,ParameterValue="$MONGODB_URL" \
-        ParameterKey=GeminiAPIKey,ParameterValue="$GEMINI_API_KEY" \
-        ParameterKey=SecretKey,ParameterValue="$JWT_SECRET" \
-        ParameterKey=MinSize,ParameterValue="$MIN_SIZE" \
-        ParameterKey=MaxSize,ParameterValue="$MAX_SIZE" \
-        ParameterKey=DesiredCapacity,ParameterValue="$DESIRED_CAPACITY" \
-    --capabilities CAPABILITY_NAMED_IAM \
-    --region "$AWS_REGION"
+if stack_exists CareFlowAI-ASG; then
+    STACK_STATUS=$(get_stack_status CareFlowAI-ASG)
+    echo -e "${YELLOW}ASG stack already exists with status: $STACK_STATUS${NC}"
 
-echo "Waiting for ASG stack creation (this may take 10-15 minutes)..."
-"$AWS_CLI" cloudformation wait stack-create-complete \
-    --stack-name CareFlowAI-ASG \
-    --region "$AWS_REGION"
+    if [ "$STACK_STATUS" = "CREATE_COMPLETE" ] || [ "$STACK_STATUS" = "UPDATE_COMPLETE" ]; then
+        echo -e "${GREEN}✓ Using existing ASG stack${NC}"
+    else
+        echo -e "${RED}ASG stack is in $STACK_STATUS state. Please check and fix manually.${NC}"
+        exit 1
+    fi
+else
+    "$AWS_CLI" cloudformation create-stack \
+        --stack-name CareFlowAI-ASG \
+        --template-body file://"$PROJECT_ROOT"/aws/cloudformation/asg.yaml \
+        --parameters \
+            ParameterKey=KeyName,ParameterValue="$KEY_NAME" \
+            ParameterKey=InstanceType,ParameterValue="$INSTANCE_TYPE" \
+            ParameterKey=VPCId,ParameterValue="$VPC_ID" \
+            ParameterKey=PublicSubnet1,ParameterValue="$SUBNET1_ID" \
+            ParameterKey=PublicSubnet2,ParameterValue="$SUBNET2_ID" \
+            ParameterKey=BackendSecurityGroup,ParameterValue="$BACKEND_SG_ID" \
+            ParameterKey=TargetGroupArn,ParameterValue="$TARGET_GROUP_ARN" \
+            ParameterKey=LoadBalancerArn,ParameterValue="$ALB_ARN" \
+            ParameterKey=MongoDBURL,ParameterValue="$MONGODB_URL" \
+            ParameterKey=GeminiAPIKey,ParameterValue="$GEMINI_API_KEY" \
+            ParameterKey=SecretKey,ParameterValue="$JWT_SECRET" \
+            ParameterKey=MinSize,ParameterValue="$MIN_SIZE" \
+            ParameterKey=MaxSize,ParameterValue="$MAX_SIZE" \
+            ParameterKey=DesiredCapacity,ParameterValue="$DESIRED_CAPACITY" \
+        --capabilities CAPABILITY_NAMED_IAM \
+        --region "$AWS_REGION"
+
+    echo "Waiting for ASG stack creation (this may take 10-15 minutes)..."
+    "$AWS_CLI" cloudformation wait stack-create-complete \
+        --stack-name CareFlowAI-ASG \
+        --region "$AWS_REGION"
+
+    echo -e "${GREEN}✓ ASG stack created${NC}"
+fi
 
 echo -e "${GREEN}✓ Auto Scaling Group deployed${NC}"
 echo ""
@@ -430,24 +444,38 @@ if [ "$DEPLOY_MONITORING" = "yes" ]; then
     echo -e "${BLUE}[7/8] Deploying CloudWatch Monitoring...${NC}"
     echo ""
 
-    # Get ALB and Target Group full names
-    ALB_FULL_NAME=$(echo "$ALB_ARN" | cut -d':' -f6 | cut -d'/' -f2-)
-    TG_FULL_NAME=$(echo "$TARGET_GROUP_ARN" | cut -d':' -f6)
+    if stack_exists CareFlowAI-Monitoring; then
+        STACK_STATUS=$(get_stack_status CareFlowAI-Monitoring)
+        echo -e "${YELLOW}CloudWatch Monitoring stack already exists with status: $STACK_STATUS${NC}"
 
-    "$AWS_CLI" cloudformation create-stack \
-        --stack-name CareFlowAI-Monitoring \
-        --template-body file://"$PROJECT_ROOT"/aws/cloudformation/cloudwatch.yaml \
-        --parameters \
-            ParameterKey=AutoScalingGroupName,ParameterValue=CareFlowAI-Backend-ASG \
-            ParameterKey=LoadBalancerFullName,ParameterValue="$ALB_FULL_NAME" \
-            ParameterKey=TargetGroupFullName,ParameterValue="$TG_FULL_NAME" \
-            ParameterKey=AlarmEmail,ParameterValue="$ALARM_EMAIL" \
-        --region "$AWS_REGION"
+        if [ "$STACK_STATUS" = "CREATE_COMPLETE" ] || [ "$STACK_STATUS" = "UPDATE_COMPLETE" ]; then
+            echo -e "${GREEN}✓ Using existing CloudWatch Monitoring stack${NC}"
+        else
+            echo -e "${RED}CloudWatch Monitoring stack is in $STACK_STATUS state. Please check and fix manually.${NC}"
+            exit 1
+        fi
+    else
+        # Get ALB and Target Group full names
+        ALB_FULL_NAME=$(echo "$ALB_ARN" | cut -d':' -f6 | cut -d'/' -f2-)
+        TG_FULL_NAME=$(echo "$TARGET_GROUP_ARN" | cut -d':' -f6)
 
-    echo "Waiting for CloudWatch stack creation..."
-    "$AWS_CLI" cloudformation wait stack-create-complete \
-        --stack-name CareFlowAI-Monitoring \
-        --region "$AWS_REGION"
+        "$AWS_CLI" cloudformation create-stack \
+            --stack-name CareFlowAI-Monitoring \
+            --template-body file://"$PROJECT_ROOT"/aws/cloudformation/cloudwatch.yaml \
+            --parameters \
+                ParameterKey=AutoScalingGroupName,ParameterValue=CareFlowAI-Backend-ASG \
+                ParameterKey=LoadBalancerFullName,ParameterValue="$ALB_FULL_NAME" \
+                ParameterKey=TargetGroupFullName,ParameterValue="$TG_FULL_NAME" \
+                ParameterKey=AlarmEmail,ParameterValue="$ALARM_EMAIL" \
+            --region "$AWS_REGION"
+
+        echo "Waiting for CloudWatch stack creation..."
+        "$AWS_CLI" cloudformation wait stack-create-complete \
+            --stack-name CareFlowAI-Monitoring \
+            --region "$AWS_REGION"
+
+        echo -e "${GREEN}✓ CloudWatch Monitoring stack created${NC}"
+    fi
 
     echo -e "${GREEN}✓ CloudWatch Monitoring deployed${NC}"
     echo -e "${YELLOW}⚠ Important: Check your email ($ALARM_EMAIL) and confirm SNS subscription!${NC}"

@@ -39,6 +39,10 @@ Parameters:
     Description: Target Group ARN for ALB
     Type: String
 
+  LoadBalancerArn:
+    Description: Load Balancer ARN
+    Type: String
+
   LatestAmiId:
     Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
     Default: '/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id'
@@ -419,9 +423,12 @@ Resources:
           PredefinedMetricType: ALBRequestCountPerTarget
           ResourceLabel: !Join
             - '/'
-            - - !Select [1, !Split ['/', !Ref TargetGroupArn]]
+            - - !Select [1, !Split ['/', !Ref LoadBalancerArn]]
+              - !Select [2, !Split ['/', !Ref LoadBalancerArn]]
+              - !Select [3, !Split ['/', !Ref LoadBalancerArn]]
+              - 'targetgroup'
+              - !Select [1, !Split ['/', !Ref TargetGroupArn]]
               - !Select [2, !Split ['/', !Ref TargetGroupArn]]
-              - !Select [3, !Split ['/', !Ref TargetGroupArn]]
         TargetValue: 1000
 
 Outputs:

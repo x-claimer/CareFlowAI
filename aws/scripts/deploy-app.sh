@@ -8,6 +8,12 @@ set -e
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
+# Convert to Windows path if on Git Bash/MINGW
+if [[ "$(uname -s)" == MINGW* ]] || [[ "$(uname -s)" == MSYS* ]]; then
+    # Convert /e/path to E:/path format for AWS CLI
+    PROJECT_ROOT=$(echo "$PROJECT_ROOT" | sed 's|^/\([a-z]\)/|\U\1:/|')
+fi
+
 # Load environment variables from .env file
 if [ -f "$PROJECT_ROOT/aws/.env" ]; then
     export $(grep -v '^#' "$PROJECT_ROOT/aws/.env" | grep -v '^$' | xargs)

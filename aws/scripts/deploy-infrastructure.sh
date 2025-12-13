@@ -11,6 +11,12 @@ set -e  # Exit on error
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
+# Convert to Windows path if on Git Bash/MINGW
+if [[ "$(uname -s)" == MINGW* ]] || [[ "$(uname -s)" == MSYS* ]]; then
+    # Convert /e/path to E:/path format for AWS CLI
+    PROJECT_ROOT=$(echo "$PROJECT_ROOT" | sed 's|^/\([a-z]\)/|\U\1:/|')
+fi
+
 # Load environment variables from .env file
 if [ -f "$PROJECT_ROOT/aws/.env" ]; then
     export $(grep -v '^#' "$PROJECT_ROOT/aws/.env" | grep -v '^$' | xargs)
@@ -83,6 +89,15 @@ wait_for_stack_update() {
     fi
 }
 
+# Function to get stack status
+get_stack_status() {
+    "$AWS_CLI" cloudformation describe-stacks \
+        --stack-name $1 \
+        --region $REGION \
+        --query 'Stacks[0].StackStatus' \
+        --output text 2>/dev/null
+}
+
 # Function to update or create stack
 update_or_create_stack() {
     STACK_NAME=$1
@@ -91,23 +106,14 @@ update_or_create_stack() {
     EXTRA_PARAMS=("$@")
 
     if stack_exists $STACK_NAME; then
-        print_message "$YELLOW" "Stack $STACK_NAME already exists. Updating..."
-        UPDATE_OUTPUT=$("$AWS_CLI" cloudformation update-stack \
-            --stack-name $STACK_NAME \
-            --template-body file://"$TEMPLATE_FILE" \
-            "${EXTRA_PARAMS[@]}" \
-            --region $REGION 2>&1)
+        STACK_STATUS=$(get_stack_status $STACK_NAME)
+        print_message "$YELLOW" "Stack $STACK_NAME already exists with status: $STACK_STATUS"
 
-        UPDATE_EXIT_CODE=$?
-
-        if [ $UPDATE_EXIT_CODE -eq 0 ]; then
-            wait_for_stack_update $STACK_NAME
-            return 0
-        elif echo "$UPDATE_OUTPUT" | grep -q "No updates are to be performed"; then
-            print_message "$YELLOW" "No updates needed for stack $STACK_NAME"
+        if [ "$STACK_STATUS" = "CREATE_COMPLETE" ] || [ "$STACK_STATUS" = "UPDATE_COMPLETE" ]; then
+            print_message "$GREEN" "✓ Using existing stack $STACK_NAME"
             return 0
         else
-            print_message "$RED" "Update failed: $UPDATE_OUTPUT"
+            print_message "$RED" "Stack $STACK_NAME is in $STACK_STATUS state. Please check and fix manually."
             exit 1
         fi
     else
