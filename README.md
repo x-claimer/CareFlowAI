@@ -79,49 +79,119 @@ Enhance team communication:
 ### Backend
 - **FastAPI** - High-performance Python web framework
 - **SQLAlchemy 2.0** - Modern async ORM
-- **SQLite** - Lightweight, serverless database
+- **SQLite** - Lightweight, serverless database (local)
+- **MongoDB** - NoSQL database (production with MongoDB Atlas)
 - **JWT (python-jose)** - Secure authentication
 - **Pydantic v2** - Data validation with type hints
 - **Uvicorn** - ASGI server with async support
 
 ### AI Integration
+- **Google Gemini** - Advanced AI for health analysis and education
 - **Modular AI Service Layer** - Ready for integration with:
   - OpenAI GPT models
-  - Google Gemini
   - Custom ML models
   - Medical AI APIs
+
+### AWS Deployment
+- **EC2** - Scalable compute instances (t2.micro with auto-scaling)
+- **Application Load Balancer** - Distribute traffic across instances
+- **Auto Scaling Group** - Automatic scaling (1-3 instances)
+- **CloudFront** - Global CDN for frontend
+- **S3** - Static file hosting
+- **API Gateway** - API management and rate limiting
+- **CloudWatch** - Monitoring, logging, and alarms
+- **VPC** - Secure network isolation
 
 ---
 
 ## 📊 System Architecture
 
+### High-Level Architecture
+
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Frontend (React)                      │
-│  ┌──────────┐  ┌──────────┐  ┌─────────────────────┐  │
-│  │  Login   │  │   Home   │  │  Schedule Manager   │  │
-│  └──────────┘  └──────────┘  └─────────────────────┘  │
-│  ┌──────────┐  ┌──────────┐                            │
-│  │ AI Nurse │  │ AI Tutor │                            │
-│  └──────────┘  └──────────┘                            │
-└─────────────────────────────────────────────────────────┘
-                         ↕ HTTP/REST API
-┌─────────────────────────────────────────────────────────┐
-│                   Backend (FastAPI)                      │
-│  ┌──────────────┐  ┌──────────────┐  ┌─────────────┐  │
-│  │ Auth Routes  │  │ Appointment  │  │  AI Routes  │  │
-│  │              │  │   Routes     │  │             │  │
-│  └──────────────┘  └──────────────┘  └─────────────┘  │
-│                         ↕                                │
-│  ┌──────────────────────────────────────────────────┐  │
-│  │           Services & Business Logic              │  │
-│  └──────────────────────────────────────────────────┘  │
-│                         ↕                                │
-│  ┌──────────────────────────────────────────────────┐  │
-│  │     Database (SQLite with SQLAlchemy ORM)        │  │
-│  │   Tables: users | appointments | comments        │  │
-│  └──────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                         User Interface                          │
+│                    (React + TypeScript)                         │
+│  ┌─────────────┐  ┌─────────────┐  ┌────────────────────────┐ │
+│  │   Login     │  │    Home     │  │  Schedule Manager      │ │
+│  └─────────────┘  └─────────────┘  └────────────────────────┘ │
+│  ┌─────────────┐  ┌─────────────┐                              │
+│  │  AI Nurse   │  │  AI Tutor   │                              │
+│  └─────────────┘  └─────────────┘                              │
+└─────────────────────────────────────────────────────────────────┘
+                            ↕ HTTP/REST API
+┌─────────────────────────────────────────────────────────────────┐
+│                      Backend (FastAPI)                          │
+│  ┌────────────────┐  ┌────────────────┐  ┌──────────────────┐ │
+│  │  Auth Routes   │  │  Appointment   │  │   AI Routes      │ │
+│  │                │  │    Routes      │  │                  │ │
+│  └────────────────┘  └────────────────┘  └──────────────────┘ │
+│                            ↕                                     │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │            Services & Business Logic                     │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                            ↕                                     │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │      Database (SQLite/MongoDB with SQLAlchemy ORM)       │  │
+│  │    Tables: users | appointments | comments               │  │
+│  └──────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+                            ↕
+┌─────────────────────────────────────────────────────────────────┐
+│                    External Services                            │
+│  ┌────────────────┐  ┌────────────────────────────────────┐    │
+│  │  Google Gemini │  │      MongoDB Atlas (Production)    │    │
+│  │   (AI API)     │  │         (Cloud Database)           │    │
+│  └────────────────┘  └────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### AWS Production Architecture
+
+```
+                          ┌──────────────┐
+                          │    Users     │
+                          └──────┬───────┘
+                                 │
+                     ┌───────────▼────────────┐
+                     │  CloudFront (CDN)      │
+                     │  + S3 (Frontend)       │
+                     └───────────┬────────────┘
+                                 │
+                     ┌───────────▼────────────┐
+                     │   API Gateway          │
+                     │   (Rate Limiting)      │
+                     └───────────┬────────────┘
+                                 │
+                     ┌───────────▼────────────┐
+                     │      VPC Link          │
+                     └───────────┬────────────┘
+                                 │
+                     ┌───────────▼────────────┐
+                     │  Application Load      │
+                     │     Balancer           │
+                     └───────────┬────────────┘
+                                 │
+              ┌──────────────────┼──────────────────┐
+              │                  │                  │
+     ┌────────▼────────┐ ┌──────▼──────┐ ┌────────▼────────┐
+     │   EC2 Instance  │ │ EC2 Instance│ │  EC2 Instance   │
+     │  (FastAPI 1)    │ │ (FastAPI 2) │ │  (FastAPI 3)    │
+     │   t2.micro      │ │  t2.micro   │ │   t2.micro      │
+     └────────┬────────┘ └──────┬──────┘ └────────┬────────┘
+              │                  │                  │
+              └──────────────────┼──────────────────┘
+                                 │
+              ┌──────────────────┼──────────────────┐
+              │                  │                  │
+     ┌────────▼────────┐ ┌──────▼──────────────────┐
+     │  MongoDB Atlas  │ │   Google Gemini AI      │
+     │   (Database)    │ │    (AI Services)        │
+     └─────────────────┘ └─────────────────────────┘
+
+     Auto Scaling Group: 1-3 instances based on CPU/traffic
+     CloudWatch: Monitoring, logging, and alarms
+     Security Groups: Network access control
 ```
 
 ---
@@ -147,6 +217,182 @@ Enhance team communication:
 - Manage facility-wide scheduling
 - Coordinate between patients and doctors
 - Administrative oversight
+
+---
+
+## 📁 Project Structure
+
+```
+CareFlowAI/
+├── frontend/                    # React frontend application
+│   ├── src/
+│   │   ├── components/          # Reusable UI components
+│   │   ├── contexts/            # React context providers
+│   │   ├── pages/               # Page components
+│   │   └── main.tsx             # Application entry point
+│   ├── package.json
+│   ├── vite.config.ts
+│   └── README.md                # Frontend documentation
+│
+├── backend/                     # FastAPI backend application
+│   ├── app/
+│   │   ├── models/              # Database models
+│   │   ├── schemas/             # Pydantic schemas
+│   │   ├── routes/              # API endpoints
+│   │   ├── services/            # Business logic
+│   │   ├── utils/               # Utility functions
+│   │   └── main.py              # FastAPI app
+│   ├── scripts/                 # Utility scripts
+│   ├── uploads/                 # Health report storage
+│   ├── requirements.txt
+│   ├── run.py
+│   └── README.md                # Backend documentation
+│
+├── aws/                         # AWS deployment infrastructure
+│   ├── cloudformation/          # CloudFormation templates
+│   │   ├── vpc.yaml
+│   │   ├── alb.yaml
+│   │   ├── asg.yaml
+│   │   └── ...
+│   ├── scripts/                 # Deployment scripts
+│   │   ├── deploy-infrastructure.sh
+│   │   ├── deploy-frontend.sh
+│   │   └── deploy-backend.sh
+│   ├── check-resources.sh
+│   ├── cleanup-aws-resources.sh
+│   └── README.md                # AWS deployment guide
+│
+└── README.md                    # This file (project overview)
+```
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+- **Node.js** 18+ and npm/yarn (for frontend)
+- **Python** 3.11+ (for backend)
+- **Git** for version control
+- **AWS CLI** (for AWS deployment - optional)
+
+### Local Development Setup
+
+#### 1. Clone the Repository
+```bash
+git clone <repository-url>
+cd CareFlowAI
+```
+
+#### 2. Setup Backend
+```bash
+cd backend
+
+# Create virtual environment
+python -m venv venv
+
+# Activate virtual environment
+# Windows:
+venv\Scripts\activate
+# macOS/Linux:
+source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Configure environment (optional)
+cp .env.example .env
+# Edit .env with your configuration
+
+# Initialize database
+python scripts/init_db.py
+
+# Start the server
+python run.py
+```
+
+The backend will be available at: **http://localhost:8000**
+
+API Documentation: **http://localhost:8000/docs**
+
+#### 3. Setup Frontend
+```bash
+cd frontend
+
+# Install dependencies
+npm install
+
+# Start development server
+npm run dev
+```
+
+The frontend will be available at: **http://localhost:5173**
+
+For detailed setup instructions, see:
+- [Frontend README](frontend/README.md)
+- [Backend README](backend/README.md)
+
+---
+
+## ☁️ AWS Deployment
+
+Deploy CareFlowAI to AWS for production use with auto-scaling, load balancing, and global CDN.
+
+### Quick Deploy (~30 minutes)
+
+```bash
+cd aws/scripts
+
+# 1. Deploy infrastructure (VPC, ALB, ASG)
+bash deploy-infrastructure.sh
+
+# 2. Deploy backend to EC2 instances
+bash deploy-app.sh
+
+# 3. Deploy frontend to S3/CloudFront
+bash deploy-frontend.sh
+```
+
+### Monthly Cost
+- **Development**: ~$10-15/month (single instance)
+- **Production**: ~$35-52/month (auto-scaling, 1-3 instances)
+
+### AWS Architecture Features
+- ✅ Auto-scaling (1-3 t2.micro instances)
+- ✅ Application Load Balancer
+- ✅ API Gateway with rate limiting
+- ✅ CloudFront CDN
+- ✅ CloudWatch monitoring
+- ✅ High availability (Multi-AZ)
+
+For complete deployment guide, see [AWS README](aws/README.md).
+
+---
+
+## 📖 Usage Guide
+
+### For Patients
+
+1. **Login**: Use your email and password, select "Patient" role
+2. **Upload Reports**: Navigate to AI Nurse, upload your health report
+3. **Get Analysis**: Receive instant AI-powered insights
+4. **Ask Questions**: Chat with AI Nurse about your results
+5. **Learn**: Use AI Tutor to understand medical terms
+6. **Manage Appointments**: View and comment on your appointments
+
+### For Doctors
+
+1. **Login**: Use your credentials with "Doctor" role
+2. **Create Appointments**: Click "New Appointment" in Schedule
+3. **Review Reports**: Access patient-uploaded reports
+4. **Add Notes**: Use comments for clinical observations
+5. **Manage Schedule**: Update appointment status as needed
+
+### For Receptionists
+
+1. **Login**: Use credentials with "Receptionist" role
+2. **Schedule Management**: Create and coordinate appointments
+3. **Patient Communication**: Use comments for administrative notes
+4. **Status Updates**: Mark appointments as completed/cancelled
 
 ---
 
@@ -198,83 +444,6 @@ Enhance team communication:
 
 ---
 
-## 🚀 Getting Started
-
-### Prerequisites
-- **Node.js** 18+ and npm/yarn
-- **Python** 3.11+
-- **Git** for version control
-
-### Installation
-
-#### 1. Clone the Repository
-```bash
-git clone <repository-url>
-cd CareFlowAI
-```
-
-#### 2. Setup Backend
-```bash
-cd backend
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Configure environment (optional)
-cp .env.example .env
-# Edit .env with your configuration
-
-# Start the server
-python run.py
-```
-
-The backend will be available at: **http://localhost:8000**
-
-API Documentation: **http://localhost:8000/docs**
-
-#### 3. Setup Frontend
-```bash
-cd frontend
-
-# Install dependencies
-npm install
-
-# Start development server
-npm run dev
-```
-
-The frontend will be available at: **http://localhost:5173**
-
----
-
-## 📖 Usage Guide
-
-### For Patients
-
-1. **Login**: Use your email and password, select "Patient" role
-2. **Upload Reports**: Navigate to AI Nurse, upload your health report
-3. **Get Analysis**: Receive instant AI-powered insights
-4. **Ask Questions**: Chat with AI Nurse about your results
-5. **Learn**: Use AI Tutor to understand medical terms
-6. **Manage Appointments**: View and comment on your appointments
-
-### For Doctors
-
-1. **Login**: Use your credentials with "Doctor" role
-2. **Create Appointments**: Click "New Appointment" in Schedule
-3. **Review Reports**: Access patient-uploaded reports
-4. **Add Notes**: Use comments for clinical observations
-5. **Manage Schedule**: Update appointment status as needed
-
-### For Receptionists
-
-1. **Login**: Use credentials with "Receptionist" role
-2. **Schedule Management**: Create and coordinate appointments
-3. **Patient Communication**: Use comments for administrative notes
-4. **Status Updates**: Mark appointments as completed/cancelled
-
----
-
 ## 🔒 Security & Privacy
 
 - 🔐 **End-to-end encryption** for data transmission
@@ -283,6 +452,7 @@ The frontend will be available at: **http://localhost:5173**
 - 👤 **Role-based access control** (RBAC)
 - 📝 **Audit trails** via comment timestamps
 - 🗄️ **Secure file storage** for health reports
+- ☁️ **AWS security** features (VPC, Security Groups, encrypted EBS)
 
 ---
 
@@ -294,14 +464,15 @@ The frontend will be available at: **http://localhost:5173**
 - [x] AI Nurse report analysis
 - [x] AI Health Tutor
 - [x] Comments system
+- [x] AWS deployment with auto-scaling
 
-### Phase 2: Enhanced AI (Planned)
-- [ ] Integration with OpenAI GPT-4
+### Phase 2: Enhanced AI (In Progress)
 - [ ] Advanced report OCR and parsing
 - [ ] Predictive health analytics
 - [ ] Personalized health recommendations
+- [ ] Multi-modal AI analysis
 
-### Phase 3: Advanced Features (Future)
+### Phase 3: Advanced Features (Planned)
 - [ ] Real-time notifications (WebSocket)
 - [ ] Video consultation integration
 - [ ] Electronic Health Records (EHR) integration
@@ -318,37 +489,6 @@ The frontend will be available at: **http://localhost:5173**
 
 ---
 
-## 📁 Project Structure
-
-```
-CareFlowAI/
-├── frontend/                 # React frontend application
-│   ├── src/
-│   │   ├── components/       # Reusable UI components
-│   │   ├── contexts/         # React context providers
-│   │   ├── pages/           # Page components
-│   │   └── main.tsx         # Application entry point
-│   ├── package.json
-│   └── vite.config.ts
-│
-├── backend/                  # FastAPI backend application
-│   ├── app/
-│   │   ├── models/          # Database models
-│   │   ├── schemas/         # Pydantic schemas
-│   │   ├── routes/          # API endpoints
-│   │   ├── services/        # Business logic
-│   │   ├── utils/           # Utility functions
-│   │   └── main.py          # FastAPI app
-│   ├── uploads/             # Health report storage
-│   ├── requirements.txt
-│   ├── run.py
-│   └── README.md
-│
-└── README.md                # This file
-```
-
----
-
 ## 🤝 Contributing
 
 We welcome contributions! Please follow these steps:
@@ -358,6 +498,59 @@ We welcome contributions! Please follow these steps:
 3. Commit your changes: `git commit -m 'Add amazing feature'`
 4. Push to the branch: `git push origin feature/amazing-feature`
 5. Open a Pull Request
+
+### Development Guidelines
+- Follow existing code structure and style
+- Write tests for new features
+- Update documentation
+- Use TypeScript for frontend (strict mode)
+- Use type hints for backend (Python)
+- Test on multiple browsers
+
+---
+
+## 📚 Documentation
+
+### Quick Links
+- **[Frontend README](frontend/README.md)** - React app setup and development
+- **[Backend README](backend/README.md)** - FastAPI backend and API docs
+- **[AWS README](aws/README.md)** - Complete AWS deployment guide
+
+### API Documentation
+- **Local**: http://localhost:8000/docs (Swagger UI)
+- **Production**: http://YOUR-DOMAIN/docs
+
+---
+
+## 🐛 Troubleshooting
+
+### Backend Issues
+```bash
+# Check backend status
+cd backend
+python run.py
+
+# View logs
+# Check terminal output for errors
+```
+
+### Frontend Issues
+```bash
+# Clear cache and reinstall
+cd frontend
+rm -rf node_modules package-lock.json
+npm install
+npm run dev
+```
+
+### Database Issues
+```bash
+# Reinitialize database
+cd backend
+python scripts/init_db.py
+```
+
+For AWS deployment issues, see [AWS Troubleshooting](aws/README.md#troubleshooting).
 
 ---
 
@@ -375,28 +568,13 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ---
 
-## 📚 Documentation
-
-### Quick Links
-- **🚀 [DEPLOY.md](DEPLOY.md)** - Complete AWS deployment guide (start here!)
-- **📖 [REFERENCE.md](REFERENCE.md)** - All AWS commands and troubleshooting
-- **🏗️ [AWS_ARCHITECTURE_GUIDE.md](AWS_ARCHITECTURE_GUIDE.md)** - System architecture details
-- **🐳 [DOCKER_KUBERNETES_SETUP.md](DOCKER_KUBERNETES_SETUP.md)** - Alternative deployment
-- **🤖 [AI_SERVICES_OVERVIEW.md](AI_SERVICES_OVERVIEW.md)** - AI features documentation
-
-### Getting Started
-1. **Local Development**: Follow the [Installation](#installation) section above
-2. **AWS Deployment**: Read [DEPLOY.md](DEPLOY.md) for step-by-step instructions
-3. **Daily Operations**: Use [REFERENCE.md](REFERENCE.md) for common commands
-
----
-
 ## 📞 Support & Contact
 
-- **Deployment Guide**: [DEPLOY.md](DEPLOY.md)
-- **Command Reference**: [REFERENCE.md](REFERENCE.md)
-- **API Docs**: http://localhost:8000/docs (local) or http://YOUR-IP/docs (AWS)
-- **Issues**: Please report bugs and feature requests via GitHub Issues
+- **Frontend Issues**: See [Frontend README](frontend/README.md)
+- **Backend Issues**: See [Backend README](backend/README.md)
+- **AWS Deployment**: See [AWS README](aws/README.md)
+- **API Documentation**: http://localhost:8000/docs (local)
+- **GitHub Issues**: Report bugs and feature requests
 
 ---
 
