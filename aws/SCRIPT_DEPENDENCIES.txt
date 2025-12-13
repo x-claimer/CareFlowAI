@@ -1,0 +1,337 @@
+================================================================================
+CareFlowAI AWS Scripts - Dependency Order & Connections
+================================================================================
+
+DEPLOYMENT ORDER (Correct Sequence):
+================================================================================
+
+1. deploy-infrastructure.sh
+   ├── Creates: VPC (Step 1)
+   │   └── Outputs: VPC ID, Subnet IDs
+   │
+   ├── Creates: Security Groups (Step 2)
+   │   ├── Requires: VPC ID from Step 1
+   │   └── Outputs: Security Group IDs
+   │
+   ├── Creates: EC2 Backend (Step 3)
+   │   ├── Requires: VPC ID, Subnet ID, Security Group ID
+   │   ├── Requires: KEY_NAME parameter
+   │   └── Outputs: Elastic IP, Instance ID
+   │
+   ├── Creates: S3 + CloudFront (Step 4)
+   │   ├── Independent (no dependencies)
+   │   └── Outputs: S3 Bucket Name, CloudFront Domain
+   │
+   └── Optional: API Gateway (Step 5)
+       ├── Requires: VPC stack exists
+       ├── Requires: ALB stack exists (not created by this script)
+       └── Outputs: API Gateway URL
+
+   IMPORTANT: ALB must be created separately before API Gateway
+
+2. deploy-api-gateway.sh (Standalone)
+   ├── Prerequisites Check:
+   │   ├── VPC stack must exist
+   │   └── ALB stack must exist
+   │
+   ├── Fetches from existing stacks:
+   │   ├── VPC ID
+   │   ├── Subnet IDs
+   │   ├── ALB ARN
+   │   └── ALB DNS
+   │
+   └── Creates:
+       ├── VPC Link
+       ├── API Gateway
+       ├── API Routes
+       └── CloudWatch Logs
+
+3. deploy-backend.sh
+   ├── Requires: EC2 instance running
+   ├── Requires: SSH key file
+   ├── Required Parameters:
+   │   ├── EC2_IP
+   │   ├── KEY_FILE
+   │   ├── MONGODB_URL
+   │   └── SECRET_KEY
+   │
+   └── Deploys:
+       ├── Application code
+       ├── Python dependencies
+       ├── Environment variables
+       └── Systemd service
+
+4. deploy-frontend.sh
+   ├── Requires: S3 bucket exists
+   ├── Requires: CloudFront distribution exists
+   ├── Required Parameters:
+   │   ├── S3_BUCKET
+   │   ├── CLOUDFRONT_DISTRIBUTION_ID
+   │   └── API_URL
+   │
+   └── Deploys:
+       ├── React build
+       └── CloudFront invalidation
+
+5. deploy-app.sh (For Auto Scaling Group)
+   ├── Requires: Auto Scaling Group with running instances
+   ├── Requires: SSH key file
+   ├── Required Parameters:
+   │   ├── KEY_FILE
+   │   └── ASG_NAME
+   │
+   └── Deploys:
+       └── Application code to all ASG instances
+
+================================================================================
+CLOUDFORMATION STACK DEPENDENCIES:
+================================================================================
+
+Stack Creation Order (MUST follow this order):
+---------------------------------------------------
+1. CareFlowAI-VPC
+   └── No dependencies
+
+2. CareFlowAI-SecurityGroups
+   └── Depends on: VPC
+
+3. CareFlowAI-Backend (EC2)
+   └── Depends on: VPC, SecurityGroups
+
+4. CareFlowAI-Frontend (S3 + CloudFront)
+   └── No dependencies
+
+5. CareFlowAI-ALB (Must be created manually)
+   └── Depends on: VPC, SecurityGroups
+
+6. CareFlowAI-ASG (Must be created manually)
+   └── Depends on: VPC, SecurityGroups, ALB
+
+7. CareFlowAI-APIGateway
+   └── Depends on: VPC, ALB
+
+8. CareFlowAI-Monitoring (Optional, must be created manually)
+   └── Depends on: ASG, ALB
+
+Stack Deletion Order (REVERSE order):
+---------------------------------------------------
+1. CareFlowAI-APIGateway
+2. CareFlowAI-Monitoring (if exists)
+3. CareFlowAI-ASG (if exists)
+4. CareFlowAI-ALB (if exists)
+5. CareFlowAI-Backend
+6. CareFlowAI-Frontend
+7. CareFlowAI-SecurityGroups
+8. CareFlowAI-VPC
+
+================================================================================
+RESOURCE DEPENDENCIES MAP:
+================================================================================
+
+VPC
+├── Creates: Subnets, Internet Gateway, Route Tables
+└── Required by: Security Groups, EC2, ALB, API Gateway
+
+Security Groups
+├── Requires: VPC
+└── Required by: EC2, ALB, VPC Link
+
+EC2 Instance
+├── Requires: VPC, Subnet, Security Group, Key Pair
+└── Required by: Backend Application
+
+S3 Bucket
+├── Requires: Nothing (independent)
+└── Required by: CloudFront, Frontend Deployment
+
+CloudFront
+├── Requires: S3 Bucket
+└── Required by: Frontend Access
+
+ALB (Application Load Balancer)
+├── Requires: VPC, Subnets, Security Groups
+└── Required by: API Gateway, ASG
+
+API Gateway
+├── Requires: VPC, Subnets, ALB
+└── Required by: Frontend API calls
+
+Auto Scaling Group
+├── Requires: VPC, Subnets, Security Groups, ALB Target Group
+└── Required by: Application Deployment
+
+CloudWatch
+├── Requires: ASG, ALB
+└── Required by: Monitoring
+
+================================================================================
+SCRIPT EXECUTION FLOW:
+================================================================================
+
+FULL DEPLOYMENT (Production):
+-------------------------------
+Step 1: bash deploy-infrastructure.sh
+        Answer 'N' to API Gateway prompt (ALB not created yet)
+
+Step 2: Manually create ALB stack:
+        aws cloudformation create-stack \
+          --stack-name CareFlowAI-ALB \
+          --template-body file://aws/cloudformation/alb.yaml \
+          ...
+
+Step 3: bash deploy-api-gateway.sh
+        (Now that ALB exists)
+
+Step 4: bash deploy-backend.sh
+        (Deploy application code to EC2)
+
+Step 5: bash deploy-frontend.sh
+        (Build and deploy React app)
+
+Step 6: (Optional) Create ASG stack manually
+Step 7: (Optional) bash deploy-app.sh (if using ASG)
+Step 8: (Optional) Create Monitoring stack manually
+
+
+SIMPLE DEPLOYMENT (Development):
+---------------------------------
+Step 1: bash deploy-infrastructure.sh
+        Answer 'N' to API Gateway
+
+Step 2: bash deploy-backend.sh
+
+Step 3: bash deploy-frontend.sh
+
+================================================================================
+PARAMETER DEPENDENCIES:
+================================================================================
+
+deploy-infrastructure.sh:
+  REQUIRED:
+    - KEY_NAME: EC2 key pair name
+    - INSTANCE_TYPE: t2.micro (default)
+    - REGION: us-east-1 (default)
+
+  PASSES TO NEXT STEPS:
+    - VPC_ID → Security Groups, EC2, API Gateway
+    - SUBNET_ID → EC2, API Gateway
+    - SG_ID → EC2
+    - ELASTIC_IP → Backend Deployment
+    - S3_BUCKET → Frontend Deployment
+    - CLOUDFRONT_DOMAIN → Frontend Access
+
+deploy-api-gateway.sh:
+  FETCHES AUTOMATICALLY:
+    - VPC_ID (from VPC stack)
+    - PUBLIC_SUBNET_1 (from VPC stack)
+    - PUBLIC_SUBNET_2 (from VPC stack)
+    - ALB_ARN (from ALB stack)
+    - ALB_DNS (from ALB stack)
+
+deploy-backend.sh:
+  REQUIRED (must edit script):
+    - EC2_IP: From deploy-infrastructure output
+    - KEY_FILE: Path to .pem file
+    - MONGODB_URL: MongoDB Atlas connection string
+    - SECRET_KEY: JWT secret key
+
+deploy-frontend.sh:
+  REQUIRED (must edit script):
+    - S3_BUCKET: From deploy-infrastructure output
+    - CLOUDFRONT_DISTRIBUTION_ID: From deploy-infrastructure output
+    - API_URL: From deploy-api-gateway output OR EC2 IP
+
+deploy-app.sh:
+  REQUIRED (interactive):
+    - KEY_FILE: Prompted during execution
+
+  FETCHES AUTOMATICALLY:
+    - Instance IPs from ASG
+
+================================================================================
+ERROR PREVENTION:
+================================================================================
+
+✓ ALWAYS check prerequisites before running:
+  - VPC exists before creating Security Groups
+  - VPC + ALB exist before creating API Gateway
+  - EC2 running before deploying backend
+  - S3 + CloudFront exist before deploying frontend
+
+✓ ALWAYS wait for stack creation to complete:
+  - Don't proceed to next stack until current completes
+  - Use wait_for_stack function in scripts
+
+✓ ALWAYS verify outputs before using them:
+  - Check VPC_ID is not empty
+  - Check ELASTIC_IP is not "None"
+  - Check bucket names are valid
+
+✗ NEVER create in wrong order:
+  - Don't create Security Groups before VPC
+  - Don't create API Gateway before ALB
+  - Don't deploy backend before EC2 exists
+
+✗ NEVER skip dependency checks:
+  - All scripts include prerequisite validation
+  - Don't bypass error checks
+
+================================================================================
+CLEANUP ORDER (cleanup-aws-resources.sh):
+================================================================================
+
+The cleanup script follows this order:
+
+1. CloudFront Distributions (disable first, then delete)
+2. EC2 Instances (terminate and wait)
+3. Load Balancers (delete ALB, wait, then target groups)
+4. S3 Buckets (empty contents, delete versions, then bucket)
+5. NAT Gateways & Elastic IPs (if any)
+6. VPC Resources (IGW, Subnets, Route Tables, Security Groups, VPC)
+7. IAM Roles and Policies
+8. CloudFormation Stacks (reverse of creation order)
+
+IMPORTANT: CloudFormation stacks are deleted LAST because they may
+           have dependencies on the resources deleted in earlier steps.
+
+================================================================================
+VERIFICATION:
+================================================================================
+
+After deployment, run:
+  bash check-resources.sh
+
+This checks (in order):
+  1. CloudFormation Stacks [1/4]
+  2. EC2 Instances [2/4]
+  3. API Gateway [3/4]
+  4. S3 Buckets & CloudFront [4/4]
+
+All resources should show as created/running.
+
+================================================================================
+COMMON ISSUES & SOLUTIONS:
+================================================================================
+
+Issue: "Stack already exists"
+Solution: Delete stack first or use update-stack instead
+
+Issue: "VPC_ID is empty"
+Solution: Wait for VPC stack to complete before proceeding
+
+Issue: "ALB not found" (during API Gateway deployment)
+Solution: Create ALB stack first using manual CloudFormation
+
+Issue: "Subnet not found"
+Solution: Ensure VPC stack created both subnets successfully
+
+Issue: "Security Group error"
+Solution: Check VPC ID is correct and Security Group stack completed
+
+Issue: "S3 bucket deletion failed"
+Solution: Run cleanup script again - it now handles versioned objects
+
+Issue: "CloudFront distribution not deleted"
+Solution: Must disable first (takes 10-20 min), then delete
+
+================================================================================

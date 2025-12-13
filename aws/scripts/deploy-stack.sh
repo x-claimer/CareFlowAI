@@ -119,7 +119,7 @@ echo ""
 
 aws cloudformation create-stack \
   --stack-name $STACK_NAME \
-  --template-body file://../cloudformation/master-stack.yaml \
+  --template-body file://"../cloudformation/master-stack.yaml" \
   --parameters \
     ParameterKey=EnvironmentName,ParameterValue=$ENVIRONMENT_NAME \
     ParameterKey=InstanceType,ParameterValue=$INSTANCE_TYPE \

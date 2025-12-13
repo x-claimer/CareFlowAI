@@ -4,6 +4,24 @@ set -e
 # CareFlowAI Application Deployment Script
 # This script deploys the application code to all instances in the Auto Scaling Group
 
+# Determine PROJECT_ROOT
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
+
+# Convert to Windows path if on Git Bash/MINGW
+if [[ "$(uname -s)" == MINGW* ]] || [[ "$(uname -s)" == MSYS* ]]; then
+    # Convert /e/path to E:/path format for AWS CLI
+    PROJECT_ROOT=$(echo "$PROJECT_ROOT" | sed 's|^/\([a-z]\)/|\U\1:/|')
+fi
+
+# Load environment variables from .env file
+if [ -f "$PROJECT_ROOT/aws/.env" ]; then
+    export $(grep -v '^#' "$PROJECT_ROOT/aws/.env" | grep -v '^$' | xargs)
+    echo "Loaded configuration from $PROJECT_ROOT/aws/.env"
+else
+    echo "Warning: .env file not found at $PROJECT_ROOT/aws/.env"
+fi
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -15,11 +33,11 @@ echo -e "${GREEN}CareFlowAI Application Deployment${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
 
-# Configuration
-ENVIRONMENT_NAME="CareFlowAI"
-REGION="us-east-1"
-PROFILE="default"
-ASG_NAME="${ENVIRONMENT_NAME}-Backend-ASG"
+# Configuration with defaults from .env or hardcoded fallbacks
+ENVIRONMENT_NAME="${ENVIRONMENT_NAME:-CareFlowAI}"
+REGION="${REGION:-us-east-1}"
+PROFILE="${AWS_PROFILE:-default}"
+ASG_NAME="${ASG_NAME:-${ENVIRONMENT_NAME}-Backend-ASG}"
 KEY_FILE=""
 
 # Check if AWS CLI is installed
@@ -70,7 +88,7 @@ echo ""
 
 # Create deployment package
 echo -e "${YELLOW}Creating deployment package...${NC}"
-cd ../../backend
+cd "$PROJECT_ROOT/backend"
 
 # Create a tarball of the application
 tar -czf /tmp/careflowai-app.tar.gz \
@@ -156,5 +174,3 @@ echo "1. Test the API endpoint"
 echo "2. Monitor CloudWatch logs"
 echo "3. Check the CloudWatch dashboard"
 echo ""
-
-cd ../aws/scripts

@@ -10,11 +10,9 @@ Parameters:
   InstanceType:
     Description: EC2 instance type
     Type: String
-    Default: t3.small
+    Default: t2.micro
     AllowedValues:
-      - t3.small
-      - t3.medium
-      - t3.large
+      - t2.micro
     ConstraintDescription: Must be a valid EC2 instance type
 
   KeyName:
@@ -39,6 +37,10 @@ Parameters:
 
   TargetGroupArn:
     Description: Target Group ARN for ALB
+    Type: String
+
+  LoadBalancerArn:
+    Description: Load Balancer ARN
     Type: String
 
   LatestAmiId:
@@ -421,9 +423,12 @@ Resources:
           PredefinedMetricType: ALBRequestCountPerTarget
           ResourceLabel: !Join
             - '/'
-            - - !Select [1, !Split ['/', !Ref TargetGroupArn]]
+            - - !Select [1, !Split ['/', !Ref LoadBalancerArn]]
+              - !Select [2, !Split ['/', !Ref LoadBalancerArn]]
+              - !Select [3, !Split ['/', !Ref LoadBalancerArn]]
+              - 'targetgroup'
+              - !Select [1, !Split ['/', !Ref TargetGroupArn]]
               - !Select [2, !Split ['/', !Ref TargetGroupArn]]
-              - !Select [3, !Split ['/', !Ref TargetGroupArn]]
         TargetValue: 1000
 
 Outputs:

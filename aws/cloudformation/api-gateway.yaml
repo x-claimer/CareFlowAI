@@ -1,0 +1,244 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'API Gateway for CareFlowAI Backend'
+
+Parameters:
+  EnvironmentName:
+    Description: Environment name prefix
+    Type: String
+    Default: CareFlowAI
+
+  LoadBalancerListenerArn:
+    Description: ARN of the Application Load Balancer HTTP Listener
+    Type: String
+
+  LoadBalancerDNS:
+    Description: DNS name of the Application Load Balancer
+    Type: String
+
+  VPCId:
+    Description: VPC ID
+    Type: String
+
+  PublicSubnet1:
+    Description: Public Subnet 1 ID
+    Type: String
+
+  PublicSubnet2:
+    Description: Public Subnet 2 ID
+    Type: String
+
+Resources:
+  # Security Group for VPC Link
+  VPCLinkSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${EnvironmentName}-VPCLink-SG
+      GroupDescription: Security group for API Gateway VPC Link
+      VpcId: !Ref VPCId
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: All outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-VPCLink-SG
+
+  # VPC Link for API Gateway to connect to private ALB
+  VPCLink:
+    Type: AWS::ApiGatewayV2::VpcLink
+    Properties:
+      Name: !Sub ${EnvironmentName}-VPCLink
+      SubnetIds:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      SecurityGroupIds:
+        - !Ref VPCLinkSecurityGroup
+      Tags:
+        Name: !Sub ${EnvironmentName}-VPCLink
+
+  # HTTP API Gateway (recommended for lower latency and cost)
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub ${EnvironmentName}-API
+      Description: API Gateway for CareFlowAI Backend
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - '*'
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - PATCH
+          - OPTIONS
+        AllowHeaders:
+          - '*'
+        MaxAge: 300
+      Tags:
+        Name: !Sub ${EnvironmentName}-API
+
+  # Integration with ALB
+  HttpApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: HTTP_PROXY
+      IntegrationUri: !Ref LoadBalancerArn
+      IntegrationMethod: ANY
+      ConnectionType: VPC_LINK
+      ConnectionId: !Ref VPCLink
+      PayloadFormatVersion: '1.0'
+      TimeoutInMillis: 30000
+
+  # Default route (catch all)
+  DefaultRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: '$default'
+      Target: !Sub integrations/${HttpApiIntegration}
+
+  # API routes
+  HealthRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'GET /health'
+      Target: !Sub integrations/${HttpApiIntegration}
+
+  ApiRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'ANY /api/{proxy+}'
+      Target: !Sub integrations/${HttpApiIntegration}
+
+  DocsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'GET /docs'
+      Target: !Sub integrations/${HttpApiIntegration}
+
+  # Deployment stage
+  ApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: prod
+      Description: Production stage
+      AutoDeploy: true
+      AccessLogSettings:
+        DestinationArn: !GetAtt ApiLogGroup.Arn
+        Format: '$context.requestId $context.routeKey $context.status $context.integrationErrorMessage'
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 1000
+        ThrottlingRateLimit: 500
+      Tags:
+        Name: !Sub ${EnvironmentName}-API-Stage
+
+  # CloudWatch Log Group for API Gateway
+  ApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/apigateway/${EnvironmentName}
+      RetentionInDays: 7
+
+  # Custom domain (optional - requires ACM certificate)
+  # ApiDomainName:
+  #   Type: AWS::ApiGatewayV2::DomainName
+  #   Properties:
+  #     DomainName: api.careflowai.com
+  #     DomainNameConfigurations:
+  #       - CertificateArn: arn:aws:acm:region:account-id:certificate/certificate-id
+  #         EndpointType: REGIONAL
+
+  # API Mapping (if using custom domain)
+  # ApiMapping:
+  #   Type: AWS::ApiGatewayV2::ApiMapping
+  #   Properties:
+  #     DomainName: !Ref ApiDomainName
+  #     ApiId: !Ref HttpApi
+  #     Stage: !Ref ApiStage
+
+  # Usage Plan for rate limiting
+  UsagePlan:
+    Type: AWS::ApiGateway::UsagePlan
+    DependsOn: ApiStage
+    Properties:
+      UsagePlanName: !Sub ${EnvironmentName}-Usage-Plan
+      Description: Usage plan for CareFlowAI API
+      Throttle:
+        BurstLimit: 1000
+        RateLimit: 500
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-Usage-Plan
+
+  # CloudWatch Alarm for API Gateway errors
+  ApiGateway5XXAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${EnvironmentName}-API-5XX-Errors
+      AlarmDescription: Alert when API Gateway returns 5XX errors
+      MetricName: 5XXError
+      Namespace: AWS/ApiGateway
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ApiId
+          Value: !Ref HttpApi
+      TreatMissingData: notBreaching
+
+  ApiGatewayLatencyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${EnvironmentName}-API-High-Latency
+      AlarmDescription: Alert when API Gateway latency is high
+      MetricName: Latency
+      Namespace: AWS/ApiGateway
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 2000
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ApiId
+          Value: !Ref HttpApi
+      TreatMissingData: notBreaching
+
+Outputs:
+  ApiGatewayId:
+    Description: API Gateway ID
+    Value: !Ref HttpApi
+    Export:
+      Name: !Sub ${EnvironmentName}-API-ID
+
+  ApiGatewayEndpoint:
+    Description: API Gateway Endpoint URL
+    Value: !GetAtt HttpApi.ApiEndpoint
+    Export:
+      Name: !Sub ${EnvironmentName}-API-Endpoint
+
+  ApiGatewayStageUrl:
+    Description: API Gateway Stage URL
+    Value: !Sub https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/prod
+    Export:
+      Name: !Sub ${EnvironmentName}-API-URL
+
+  VPCLinkId:
+    Description: VPC Link ID
+    Value: !Ref VPCLink
+    Export:
+      Name: !Sub ${EnvironmentName}-VPCLink-ID
+
+  ApiLogGroupName:
+    Description: API Gateway Log Group Name
+    Value: !Ref ApiLogGroup
+    Export:
+      Name: !Sub ${EnvironmentName}-API-LogGroup

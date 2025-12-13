@@ -7,14 +7,32 @@
 
 set -e  # Exit on error
 
-# Configuration
-STACK_NAME_PREFIX="CareFlowAI"
-REGION="us-east-1"
-KEY_NAME="CareFlowAI-Key-New"  # Set your EC2 key pair name
-INSTANCE_TYPE="t2.micro"  # Options: t2.micro, t3.small, t3.medium
-# Override to point to a specific aws binary if needed.
-# If not provided, we try to pick a Linux binary even if PATH points to /mnt/c/...
-AWS_CLI="${AWS_CLI:-}"
+# Determine PROJECT_ROOT
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
+
+# Convert to Windows path if on Git Bash/MINGW
+if [[ "$(uname -s)" == MINGW* ]] || [[ "$(uname -s)" == MSYS* ]]; then
+    # Convert /e/path to E:/path format for AWS CLI
+    PROJECT_ROOT=$(echo "$PROJECT_ROOT" | sed 's|^/\([a-z]\)/|\U\1:/|')
+fi
+
+# Load environment variables from .env file
+if [ -f "$PROJECT_ROOT/aws/.env" ]; then
+    export $(grep -v '^#' "$PROJECT_ROOT/aws/.env" | grep -v '^$' | xargs)
+    echo "Loaded configuration from $PROJECT_ROOT/aws/.env"
+else
+    echo "Warning: .env file not found at $PROJECT_ROOT/aws/.env"
+    echo "Using default values or environment variables"
+fi
+
+# Configuration with defaults from .env or hardcoded fallbacks
+STACK_NAME_PREFIX="${STACK_NAME_PREFIX:-CareFlowAI}"
+REGION="${REGION:-us-east-1}"
+KEY_NAME="${KEY_NAME:-CareFlowAI-Key-New}"
+INSTANCE_TYPE="${INSTANCE_TYPE:-t2.micro}"
+DEPLOY_API_GATEWAY="${DEPLOY_API_GATEWAY:-yes}"
+AWS_CLI="${AWS_CLI:-}"  # Will be auto-detected if not set
 
 # Colors for output
 RED='\033[0;31m'
@@ -37,7 +55,7 @@ stack_exists() {
         &> /dev/null
 }
 
-# Function to wait for stack completion
+# Function to wait for stack creation
 wait_for_stack() {
     STACK_NAME=$1
     print_message "$YELLOW" "Waiting for stack $STACK_NAME to complete..."
@@ -54,28 +72,111 @@ wait_for_stack() {
     fi
 }
 
-# Resolve AWS CLI path, preferring a Linux binary over a Windows path
-if [ -z "$AWS_CLI" ]; then
-    if command -v /usr/bin/aws >/dev/null 2>&1; then
-        AWS_CLI="/usr/bin/aws"
+# Function to wait for stack update
+wait_for_stack_update() {
+    STACK_NAME=$1
+    print_message "$YELLOW" "Waiting for stack $STACK_NAME update to complete..."
+
+    "$AWS_CLI" cloudformation wait stack-update-complete \
+        --stack-name $STACK_NAME \
+        --region $REGION
+
+    if [ $? -eq 0 ]; then
+        print_message "$GREEN" "Stack $STACK_NAME updated successfully!"
     else
-        AWS_CLI="$(command -v aws || true)"
+        print_message "$RED" "Stack $STACK_NAME update failed!"
+        exit 1
+    fi
+}
+
+# Function to get stack status
+get_stack_status() {
+    "$AWS_CLI" cloudformation describe-stacks \
+        --stack-name $1 \
+        --region $REGION \
+        --query 'Stacks[0].StackStatus' \
+        --output text 2>/dev/null
+}
+
+# Function to update or create stack
+update_or_create_stack() {
+    STACK_NAME=$1
+    TEMPLATE_FILE=$2
+    shift 2
+    EXTRA_PARAMS=("$@")
+
+    if stack_exists $STACK_NAME; then
+        STACK_STATUS=$(get_stack_status $STACK_NAME)
+        print_message "$YELLOW" "Stack $STACK_NAME already exists with status: $STACK_STATUS"
+
+        if [ "$STACK_STATUS" = "CREATE_COMPLETE" ] || [ "$STACK_STATUS" = "UPDATE_COMPLETE" ]; then
+            print_message "$GREEN" "✓ Using existing stack $STACK_NAME"
+            return 0
+        else
+            print_message "$RED" "Stack $STACK_NAME is in $STACK_STATUS state. Please check and fix manually."
+            exit 1
+        fi
+    else
+        print_message "$YELLOW" "Creating stack $STACK_NAME..."
+        "$AWS_CLI" cloudformation create-stack \
+            --stack-name $STACK_NAME \
+            --template-body file://"$TEMPLATE_FILE" \
+            "${EXTRA_PARAMS[@]}" \
+            --region $REGION
+
+        wait_for_stack $STACK_NAME
+    fi
+}
+
+# Resolve AWS CLI path
+if [ -z "$AWS_CLI" ]; then
+    # Check if we're on Git Bash/MINGW (Windows)
+    if [[ "$(uname -s)" == MINGW* ]] || [[ "$(uname -s)" == MSYS* ]]; then
+        # On Git Bash/Windows, try to find AWS CLI
+        # First check if aws.exe is in PATH (most reliable)
+        if command -v aws.exe >/dev/null 2>&1; then
+            AWS_CLI="aws.exe"
+        elif command -v aws >/dev/null 2>&1; then
+            AWS_CLI="aws"
+        # Then check standard Windows installation paths
+        elif [ -f "/c/Program Files/Amazon/AWSCLIV2/aws.exe" ]; then
+            AWS_CLI="/c/Program Files/Amazon/AWSCLIV2/aws.exe"
+        elif [ -f "/c/Program Files/Amazon/AWSCLIV2/aws" ]; then
+            AWS_CLI="/c/Program Files/Amazon/AWSCLIV2/aws"
+        fi
+    else
+        # On Linux/WSL, try Linux paths first
+        if [ -x "/usr/local/bin/aws" ]; then
+            AWS_CLI="/usr/local/bin/aws"
+        elif [ -x "/usr/bin/aws" ]; then
+            AWS_CLI="/usr/bin/aws"
+        elif [ -x "/bin/aws" ]; then
+            AWS_CLI="/bin/aws"
+        else
+            # Fallback to command -v but exclude Windows paths on WSL
+            TEMP_AWS="$(command -v aws 2>/dev/null || true)"
+            if [[ "$TEMP_AWS" != /mnt/c/* ]] && [ -n "$TEMP_AWS" ]; then
+                AWS_CLI="$TEMP_AWS"
+            fi
+        fi
     fi
 fi
 
-if [[ "$AWS_CLI" == /mnt/c/* ]]; then
-    print_message "$YELLOW" "Detected Windows AWS CLI path ($AWS_CLI); trying Linux aws instead"
-    if command -v /usr/bin/aws >/dev/null 2>&1; then
-        AWS_CLI="/usr/bin/aws"
-    elif command -v aws >/dev/null 2>&1; then
-        AWS_CLI="$(command -v aws)"
+# Final validation
+if [ -z "$AWS_CLI" ]; then
+    print_message "$RED" "AWS CLI not found. Please install AWS CLI v2."
+    if [[ "$(uname -s)" == MINGW* ]] || [[ "$(uname -s)" == MSYS* ]]; then
+        print_message "$YELLOW" "Download from: https://awscli.amazonaws.com/AWSCLIV2.msi"
+    else
+        print_message "$YELLOW" "Install with:"
+        print_message "$YELLOW" "  curl \"https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip\" -o \"awscliv2.zip\""
+        print_message "$YELLOW" "  unzip awscliv2.zip"
+        print_message "$YELLOW" "  sudo ./aws/install"
     fi
-fi
-
-if [ -z "$AWS_CLI" ] || ! command -v "$AWS_CLI" >/dev/null 2>&1; then
-    print_message "$RED" "AWS CLI not found. Install AWS CLI v2 for Linux or set AWS_CLI to the correct binary."
     exit 1
 fi
+
+print_message "$GREEN" "Using AWS CLI: $AWS_CLI"
 
 # Check if key name is set
 if [ -z "$KEY_NAME" ]; then
@@ -89,20 +190,8 @@ print_message "$GREEN" "Starting CareFlowAI infrastructure deployment..."
 print_message "$YELLOW" "Deploying VPC..."
 VPC_STACK_NAME="${STACK_NAME_PREFIX}-VPC"
 
-if stack_exists $VPC_STACK_NAME; then
-    print_message "$YELLOW" "VPC stack already exists. Updating..."
-    "$AWS_CLI" cloudformation update-stack \
-        --stack-name $VPC_STACK_NAME \
-        --template-body file://aws/cloudformation/vpc.yaml \
-        --region $REGION
-else
-    "$AWS_CLI" cloudformation create-stack \
-        --stack-name $VPC_STACK_NAME \
-        --template-body file://aws/cloudformation/vpc.yaml \
-        --region $REGION
 
-    wait_for_stack $VPC_STACK_NAME
-fi
+update_or_create_stack $VPC_STACK_NAME "$PROJECT_ROOT/aws/cloudformation/vpc.yaml"
 
 # Get VPC ID
 VPC_ID=$("$AWS_CLI" cloudformation describe-stacks \
@@ -117,22 +206,8 @@ print_message "$GREEN" "VPC ID: $VPC_ID"
 print_message "$YELLOW" "Deploying Security Groups..."
 SG_STACK_NAME="${STACK_NAME_PREFIX}-SecurityGroups"
 
-if stack_exists $SG_STACK_NAME; then
-    print_message "$YELLOW" "Security Groups stack already exists. Updating..."
-    "$AWS_CLI" cloudformation update-stack \
-        --stack-name $SG_STACK_NAME \
-        --template-body file://aws/cloudformation/security-groups.yaml \
-        --parameters ParameterKey=VPCId,ParameterValue=$VPC_ID \
-        --region $REGION
-else
-    "$AWS_CLI" cloudformation create-stack \
-        --stack-name $SG_STACK_NAME \
-        --template-body file://aws/cloudformation/security-groups.yaml \
-        --parameters ParameterKey=VPCId,ParameterValue=$VPC_ID \
-        --region $REGION
-
-    wait_for_stack $SG_STACK_NAME
-fi
+update_or_create_stack $SG_STACK_NAME "$PROJECT_ROOT/aws/cloudformation/security-groups.yaml" \
+    --parameters ParameterKey=VPCId,ParameterValue=$VPC_ID
 
 # Get Security Group ID
 SG_ID=$("$AWS_CLI" cloudformation describe-stacks \
@@ -161,7 +236,7 @@ if stack_exists $EC2_STACK_NAME; then
 else
     "$AWS_CLI" cloudformation create-stack \
         --stack-name $EC2_STACK_NAME \
-        --template-body file://aws/cloudformation/ec2-backend.yaml \
+        --template-body file://"$PROJECT_ROOT"/aws/cloudformation/ec2-backend.yaml \
         --parameters \
             ParameterKey=KeyName,ParameterValue=$KEY_NAME \
             ParameterKey=InstanceType,ParameterValue=$INSTANCE_TYPE \
@@ -192,7 +267,7 @@ if stack_exists $S3_STACK_NAME; then
 else
     "$AWS_CLI" cloudformation create-stack \
         --stack-name $S3_STACK_NAME \
-        --template-body file://aws/cloudformation/s3-cloudfront.yaml \
+        --template-body file://"$PROJECT_ROOT"/aws/cloudformation/s3-cloudfront.yaml \
         --region $REGION
 
     wait_for_stack $S3_STACK_NAME
@@ -214,6 +289,58 @@ CLOUDFRONT_DOMAIN=$("$AWS_CLI" cloudformation describe-stacks \
 print_message "$GREEN" "S3 Bucket: $BUCKET_NAME"
 print_message "$GREEN" "CloudFront Domain: $CLOUDFRONT_DOMAIN"
 
+# 5. Deploy API Gateway (Optional - requires ALB first)
+# Set DEPLOY_API_GATEWAY=yes environment variable to enable
+if [[ "$DEPLOY_API_GATEWAY" =~ ^[Yy][Ee][Ss]$|^[Yy]$ ]]; then
+    print_message "$YELLOW" "Deploying API Gateway..."
+    # Check if ALB stack exists
+    ALB_STACK_NAME="${STACK_NAME_PREFIX}-ALB"
+    if stack_exists $ALB_STACK_NAME; then
+        # Get ALB details
+        ALB_ARN=$("$AWS_CLI" cloudformation describe-stacks \
+            --stack-name $ALB_STACK_NAME \
+            --region $REGION \
+            --query 'Stacks[0].Outputs[?OutputKey==`LoadBalancerArn`].OutputValue' \
+            --output text)
+
+        ALB_DNS=$("$AWS_CLI" cloudformation describe-stacks \
+            --stack-name $ALB_STACK_NAME \
+            --region $REGION \
+            --query 'Stacks[0].Outputs[?OutputKey==`LoadBalancerDNS`].OutputValue' \
+            --output text)
+
+        API_STACK_NAME="${STACK_NAME_PREFIX}-APIGateway"
+        SUBNET2=$("$AWS_CLI" cloudformation describe-stacks \
+            --stack-name $VPC_STACK_NAME \
+            --region $REGION \
+            --query 'Stacks[0].Outputs[?OutputKey==`PublicSubnet2`].OutputValue' \
+            --output text)
+
+        update_or_create_stack $API_STACK_NAME "$PROJECT_ROOT/aws/cloudformation/api-gateway.yaml" \
+            --parameters \
+                ParameterKey=VPCId,ParameterValue=$VPC_ID \
+                ParameterKey=PublicSubnet1,ParameterValue=$SUBNET_ID \
+                ParameterKey=PublicSubnet2,ParameterValue=$SUBNET2 \
+                ParameterKey=LoadBalancerArn,ParameterValue=$ALB_ARN \
+                ParameterKey=LoadBalancerDNS,ParameterValue=$ALB_DNS \
+            --capabilities CAPABILITY_IAM
+
+        # Get API Gateway URL
+        API_URL=$("$AWS_CLI" cloudformation describe-stacks \
+            --stack-name $API_STACK_NAME \
+            --region $REGION \
+            --query 'Stacks[0].Outputs[?OutputKey==`ApiGatewayStageUrl`].OutputValue' \
+            --output text)
+
+        print_message "$GREEN" "API Gateway URL: $API_URL"
+    else
+        print_message "$YELLOW" "ALB stack not found. Deploy ALB first, then run this script again for API Gateway."
+    fi
+else
+    print_message "$YELLOW" "Skipping API Gateway deployment."
+    API_URL="Not deployed"
+fi
+
 # Summary
 print_message "$GREEN" "\n========================================="
 print_message "$GREEN" "Infrastructure Deployment Complete!"
@@ -224,9 +351,15 @@ echo "Security Group ID: $SG_ID"
 echo "EC2 Elastic IP: $ELASTIC_IP"
 echo "S3 Bucket: $BUCKET_NAME"
 echo "CloudFront Domain: https://$CLOUDFRONT_DOMAIN"
+if [[ "$API_URL" != "Not deployed" ]]; then
+    echo "API Gateway URL: $API_URL"
+fi
 print_message "$YELLOW" "\nNext Steps:"
 echo "1. SSH into EC2: ssh -i your-key.pem ubuntu@$ELASTIC_IP"
 echo "2. Deploy backend application"
 echo "3. Deploy frontend to S3"
 echo "4. Configure MongoDB Atlas and add Elastic IP to whitelist"
+if [[ "$API_URL" != "Not deployed" ]]; then
+    echo "5. Test API via API Gateway: curl $API_URL/health"
+fi
 print_message "$GREEN" "========================================="

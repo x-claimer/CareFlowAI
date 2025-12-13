@@ -17,139 +17,217 @@ Get your CareFlowAI infrastructure up and running in 15 minutes.
 
 ```bash
 cd aws/scripts
-chmod +x deploy-stack.sh
-./deploy-stack.sh
+chmod +x deploy-infrastructure.sh
+./deploy-infrastructure.sh
 ```
 
-When prompted, provide:
+**When prompted, provide:**
 - EC2 Key Pair Name
-- MongoDB URL
-- Gemini API Key
-- Email for alarms
-- Instance settings (or use defaults)
+- Instance Type (default: t2.micro)
+- Region (default: us-east-1)
 
 **Wait for stack creation to complete.**
 
-### Step 2: Deploy Application (2-3 minutes)
+### Step 2: Deploy Backend (2-3 minutes)
 
+Edit `deploy-backend.sh` first:
 ```bash
-chmod +x deploy-app.sh
-./deploy-app.sh
+EC2_IP="your-elastic-ip-from-step-1"
+KEY_FILE="path/to/your-key.pem"
+MONGODB_URL="your-mongodb-atlas-url"
+SECRET_KEY="$(openssl rand -hex 32)"
 ```
 
-Provide:
-- Path to your SSH key (.pem file)
+Then deploy:
+```bash
+chmod +x deploy-backend.sh
+./deploy-backend.sh
+```
 
-### Step 3: Test Your Deployment
+### Step 3: Deploy Frontend (2 minutes)
+
+Edit `deploy-frontend.sh`:
+```bash
+S3_BUCKET="your-s3-bucket-from-step-1"
+CLOUDFRONT_DISTRIBUTION_ID="your-dist-id-from-step-1"
+API_URL="http://your-elastic-ip:8000"
+```
+
+Then deploy:
+```bash
+chmod +x deploy-frontend.sh
+./deploy-frontend.sh
+```
+
+## Test Your Deployment
 
 ```bash
-# Get your ALB DNS from the output, then:
-curl http://YOUR_ALB_DNS/health
+# Test backend
+curl http://YOUR_EC2_IP:8000/health
 
-# Should return: {"status":"healthy","service":"CareFlowAI API","database":"MongoDB"}
+# Expected response:
+# {"status":"healthy","service":"CareFlowAI API","database":"MongoDB"}
+
+# Test API docs
+open http://YOUR_EC2_IP:8000/docs
+
+# Test frontend
+open https://YOUR_CLOUDFRONT_DOMAIN.cloudfront.net
 ```
 
 ## Access Your Services
 
 After deployment:
 
-- **API Endpoint**: `http://YOUR_ALB_DNS`
-- **API Docs**: `http://YOUR_ALB_DNS/docs`
-- **Health Check**: `http://YOUR_ALB_DNS/health`
-- **CloudWatch Dashboard**: Check your email for the dashboard link
+- **API Endpoint**: `http://YOUR_EC2_IP:8000`
+- **API Docs**: `http://YOUR_EC2_IP:8000/docs`
+- **Health Check**: `http://YOUR_EC2_IP:8000/health`
+- **Frontend**: `https://YOUR_CLOUDFRONT_DOMAIN.cloudfront.net`
 
-## Update Frontend
+## Optional: Deploy with API Gateway
+
+If you want API Gateway:
 
 ```bash
-cd frontend
+# First, deploy ALB manually
+aws cloudformation create-stack \
+  --stack-name CareFlowAI-ALB \
+  --template-body file://aws/cloudformation/alb.yaml \
+  --parameters \
+    ParameterKey=VPCId,ParameterValue=YOUR_VPC_ID \
+    ParameterKey=PublicSubnet1,ParameterValue=SUBNET1_ID \
+    ParameterKey=PublicSubnet2,ParameterValue=SUBNET2_ID \
+  --region us-east-1
 
-# Update .env with your ALB DNS
-echo "VITE_API_URL=http://YOUR_ALB_DNS" > .env
-
-# Build and deploy
-npm run build
+# Wait for ALB to be created, then:
+cd aws/scripts
+chmod +x deploy-api-gateway.sh
+./deploy-api-gateway.sh
 ```
 
-## Monitor Your Application
+## Verify Deployment
 
-1. **CloudWatch Dashboard**: View real-time metrics
-2. **CloudWatch Logs**: `/careflowai/backend` log group
-3. **Email Alerts**: Confirm SNS subscription in your email
+```bash
+# Check all resources
+bash aws/check-resources.sh
+```
+
+Should show:
+- ✅ CloudFormation Stacks
+- ✅ EC2 Instances
+- ✅ S3 Buckets
+- ✅ CloudFront Distribution
 
 ## Common Commands
 
 ```bash
-# Check ASG instances
-aws autoscaling describe-auto-scaling-groups \
-  --auto-scaling-group-names CareFlowAI-Backend-ASG
+# View backend logs
+ssh -i your-key.pem ubuntu@YOUR_EC2_IP
+sudo journalctl -u careflowai-backend -f
 
-# View logs
-aws logs tail /careflowai/backend --follow
+# Restart backend
+sudo systemctl restart careflowai-backend
 
-# Scale up
-aws autoscaling set-desired-capacity \
-  --auto-scaling-group-name CareFlowAI-Backend-ASG \
-  --desired-capacity 3
+# Check backend status
+sudo systemctl status careflowai-backend
+
+# Update backend code
+cd /opt/careflowai
+git pull origin main
+cd backend
+source venv/bin/activate
+pip install -r requirements.txt
+sudo systemctl restart careflowai-backend
 ```
 
 ## Troubleshooting
 
-**Problem**: Health check failing
+### Problem: Health check failing
 ```bash
 # SSH into instance
-ssh -i your-key.pem ubuntu@INSTANCE_IP
+ssh -i your-key.pem ubuntu@YOUR_EC2_IP
 
 # Check service
-sudo systemctl status careflowai
-sudo journalctl -u careflowai -f
+sudo systemctl status careflowai-backend
+sudo journalctl -u careflowai-backend -f
+
+# Check if Python process is running
+ps aux | grep uvicorn
+
+# Check if port 8000 is listening
+sudo netstat -tlnp | grep 8000
 ```
 
-**Problem**: Can't access API
-- Check security groups allow port 8000
-- Verify ALB target health
-- Check CloudWatch logs for errors
+### Problem: Can't SSH into EC2
+- Verify security group allows port 22 from your IP
+- Check key file permissions: `chmod 400 your-key.pem`
+- Verify you're using the correct key pair
 
-**Problem**: 5XX errors
-```bash
-# View error logs
-aws logs tail /careflowai/backend --follow --filter-pattern ERROR
-```
+### Problem: Frontend shows blank page
+- Check browser console for errors
+- Verify API_URL in frontend .env
+- Test API endpoint directly: `curl http://YOUR_EC2_IP:8000/health`
+
+### Problem: Database connection error
+- Check MongoDB Atlas network access whitelist
+- Verify EC2 Elastic IP is whitelisted
+- Test connection from EC2:
+  ```bash
+  python3 -c "from pymongo import MongoClient; client = MongoClient('YOUR_MONGO_URL'); print(client.server_info())"
+  ```
 
 ## What's Deployed?
 
 - ✅ VPC with 2 availability zones
-- ✅ Application Load Balancer
-- ✅ Auto Scaling Group (1-3 instances)
-- ✅ CloudWatch monitoring & alarms
-- ✅ IAM roles and security groups
-- ✅ Automated health checks
-- ✅ Log aggregation
+- ✅ Security Groups
+- ✅ EC2 t2.micro instance with Elastic IP
+- ✅ S3 bucket for frontend
+- ✅ CloudFront distribution
+- ✅ IAM roles and policies
 
 ## Cost Estimate
 
-~$74/month for default configuration:
-- 2x t3.small instances: ~$30
-- Application Load Balancer: ~$20
-- Data transfer: ~$9
-- CloudWatch: ~$10
-- S3 + CloudFront: ~$5
+### Simple Deployment
+- EC2 t2.micro: $8.50/month
+- EBS 30GB: $3/month
+- S3 + CloudFront: $1-2/month
+- **Total: ~$12-15/month**
+
+### With ALB + API Gateway
+- EC2 t2.micro: $8.50/month
+- ALB: $16.20/month
+- API Gateway: $1/month
+- S3 + CloudFront: $1-2/month
+- CloudWatch: $3/month
+- **Total: ~$30-35/month**
 
 ## Next Steps
 
-1. ✅ Deploy infrastructure
-2. ✅ Deploy application
-3. ✅ Test API endpoints
-4. ⏭ Update frontend configuration
-5. ⏭ Configure custom domain (optional)
-6. ⏭ Enable HTTPS with ACM (optional)
-7. ⏭ Set up CI/CD pipeline (optional)
+1. ✅ Infrastructure deployed
+2. ✅ Backend deployed
+3. ✅ Frontend deployed
+4. ⏭ Configure custom domain (optional)
+5. ⏭ Enable HTTPS on ALB with ACM (optional)
+6. ⏭ Set up monitoring and alerts (optional)
+7. ⏭ Implement CI/CD pipeline (optional)
+
+## Cleanup
+
+To delete all resources:
+
+```bash
+cd aws
+bash cleanup-aws-resources.sh
+```
+
+⚠️ **Warning**: This permanently deletes all data!
 
 ## Need Help?
 
-- Full documentation: [DEPLOYMENT.md](./DEPLOYMENT.md)
-- CloudFormation templates: [cloudformation/](./cloudformation/)
-- AWS Support: https://console.aws.amazon.com/support/
+- Full documentation: [Deployment_order_and_commands.md](./Deployment_order_and_commands.md)
+- Architecture details: [Deployment_architecture.md](./Deployment_architecture.md)
+- Service info: [Services_used_and_cost_comparison.md](./Services_used_and_cost_comparison.md)
 
 ---
 
-**Ready to deploy?** Run `./deploy-stack.sh` and follow the prompts!
+**Congratulations!** 🎉 Your CareFlowAI infrastructure is now deployed!

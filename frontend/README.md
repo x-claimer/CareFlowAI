@@ -1,126 +1,308 @@
 # CareFlowAI Frontend
 
-A production-ready React + TypeScript + Tailwind CSS single-page application for CareFlowAI – an AI nurse and health tutor platform.
+Modern, intelligent healthcare management platform frontend built with React, TypeScript, and Tailwind CSS.
 
-## Tech Stack
+---
 
-- **React 18** – UI library
-- **TypeScript** – Type safety
-- **Vite** – Lightning-fast bundler
-- **Tailwind CSS** – Utility-first styling
-- **React Query (@tanstack/react-query)** – Server state management with mock API
+## 🚀 Tech Stack
 
-## Features
+- **React 19** - Modern UI library with latest features
+- **TypeScript** - Type-safe development
+- **Tailwind CSS 4** - Utility-first styling with latest features
+- **React Router v7** - Advanced routing capabilities
+- **Lucide React** - Beautiful, consistent icons
+- **Vite** - Lightning-fast build tool
 
-- **Responsive Design** – Mobile-first layout that adapts to all screen sizes
-- **Component-based Architecture** – Modular, reusable components
-- **Mock API** – Simulated data fetching with React Query
-- **Accessible** – Semantic HTML, ARIA labels, and keyboard navigation
-- **Clean UI** – Tailwind CSS for consistent, professional styling
+---
 
-## Project Structure
+## ✨ Features
+
+### User Interface
+- **Responsive Design** - Mobile-first layout that adapts to all screen sizes
+- **Component-based Architecture** - Modular, reusable components
+- **Accessible** - Semantic HTML, ARIA labels, and keyboard navigation
+- **Modern UI** - Clean, professional styling with Tailwind CSS
+
+### Core Components
+- **Authentication** - Login system with role-based access
+- **Dashboard** - Role-specific home views for patients, doctors, and receptionists
+- **AI Nurse** - Health report upload and analysis interface
+- **AI Tutor** - Medical terminology search and education
+- **Schedule Manager** - Appointment scheduling and management
+- **Comments System** - Collaborative appointment notes
+
+---
+
+## 📁 Project Structure
 
 ```
-src/
-├── components/
-│   ├── NavBar.tsx           # Top navigation bar
-│   ├── Hero.tsx             # Hero section with CTA buttons
-│   ├── SearchBar.tsx        # Health search input
-│   ├── FeatureCards.tsx     # Feature highlight cards
-│   ├── LearnSection.tsx     # Articles section with React Query
-│   └── Footer.tsx           # Footer with disclaimer & links
-├── api/
-│   └── mockArticles.ts      # Mock API data & query function
-├── styles/
-│   └── globals.css          # Tailwind directives & global styles
-├── App.tsx                  # Main app layout
-└── main.tsx                 # React entry point
-
-Configuration files:
-├── vite.config.ts           # Vite configuration
-├── tsconfig.json            # TypeScript configuration
-├── tailwind.config.cjs       # Tailwind CSS configuration
-└── postcss.config.cjs        # PostCSS configuration
+frontend/
+├── src/
+│   ├── components/          # Reusable UI components
+│   │   ├── NavBar.tsx      # Top navigation bar
+│   │   ├── Hero.tsx        # Hero section with CTA buttons
+│   │   ├── SearchBar.tsx   # Health search input
+│   │   ├── FeatureCards.tsx # Feature highlight cards
+│   │   ├── LearnSection.tsx # Articles section
+│   │   └── Footer.tsx      # Footer with links
+│   ├── contexts/            # React context providers
+│   │   └── AuthContext.tsx # Authentication state
+│   ├── pages/              # Page components
+│   │   ├── Login.tsx       # Login page
+│   │   ├── Home.tsx        # Dashboard
+│   │   ├── AINurse.tsx     # AI Nurse interface
+│   │   ├── AITutor.tsx     # AI Tutor interface
+│   │   └── Schedule.tsx    # Appointment scheduler
+│   ├── styles/
+│   │   └── globals.css     # Tailwind directives & global styles
+│   ├── App.tsx             # Main app layout with routing
+│   └── main.tsx            # React entry point
+│
+├── public/                  # Static assets
+├── package.json            # Dependencies and scripts
+├── vite.config.ts          # Vite configuration
+├── tsconfig.json           # TypeScript configuration
+├── tailwind.config.cjs     # Tailwind CSS configuration
+└── postcss.config.cjs      # PostCSS configuration
 ```
 
-## How to Run Locally
+---
+
+## 🛠️ Getting Started
 
 ### Prerequisites
-- Node.js 16+ installed
-- npm or yarn package manager
+- **Node.js 18+** - [Download Node.js](https://nodejs.org/)
+- **npm** or **yarn** - Comes with Node.js
 
-### Setup & Run
+### Installation
 
 ```bash
-# 1. Navigate to the project directory
-cd careflowai-frontend
+# Navigate to the frontend directory
+cd frontend
 
-# 2. Install dependencies
+# Install dependencies
 npm install
 
-# 3. Start the development server
+# Start development server
 npm run dev
 ```
 
-Open your browser and navigate to the URL shown in the terminal (typically `http://localhost:5173`).
+The frontend will be available at: **http://localhost:5173**
 
 ### Build for Production
 
 ```bash
+# Create optimized production build
 npm run build
+
+# Preview production build locally
+npm run preview
 ```
 
 Output files will be in the `dist/` directory.
 
-### Preview Production Build
+---
 
-```bash
-npm run preview
-```
-
-## Features Overview
+## 🎨 Component Overview
 
 ### Navigation Bar
 - Logo "CareFlowAI" on the left
-- Nav links: Home, AI Nurse, Tutor, About
+- Navigation links: Home, AI Nurse, Tutor, Schedule
+- User menu with logout option
+- Role indicator badge
 
 ### Hero Section
 - Large title and subtitle
-- Two call-to-action buttons: "Start Symptom Check" & "Ask a Health Question"
+- Call-to-action buttons
 - Responsive design with gradient background
 
 ### Search Bar
-- Full-width search input with leading icon
-- Placeholder text guides user input
-- Console logs search queries on submit
+- Full-width search input with icon
+- Real-time search functionality
+- Mobile-optimized
 
 ### Feature Cards
-- 4 quick-access cards (responsive grid: 2 cols on mobile, 4 cols on desktop)
+- 4 quick-access cards in responsive grid
 - Hover effects with border transitions
-- Card clicks logged to console
+- Click handlers for navigation
 
-### Learn Section
-- Fetches mock articles using React Query
-- Displays loading/error states
-- 3 sample articles about health topics
-- Responsive grid layout
+### AI Nurse Interface
+- File upload for health reports (PDF, JPG, PNG)
+- Chat interface for AI analysis
+- Report history view
 
-### Footer
-- Disclaimer about CareFlowAI not being a medical substitute
-- Links for About, Privacy, and Terms
+### AI Tutor Interface
+- Medical term search
+- Popular topics section
+- Detailed explanations with examples
 
-## Development Tips
-
-- **Add new components**: Create a `.tsx` file in `src/components/`, export a function component
-- **Add styles**: Use Tailwind utility classes directly in JSX; avoid custom CSS when possible
-- **Mock API data**: Update `src/api/mockArticles.ts` and query with `useQuery` in components
-- **Type safety**: Always define component props and API response types
-
-## Browser Support
-
-Works in all modern browsers supporting ES2020+ (Chrome, Firefox, Safari, Edge).
+### Schedule Manager
+- Calendar view of appointments
+- Create/edit/delete functionality (role-based)
+- Status tracking (scheduled, completed, cancelled)
+- Comments section per appointment
 
 ---
 
-Built with ❤️ for healthcare professionals and patients alike.
-CareFlow AI is an intelligent healthcare operations platform that unifies scheduling, microservices, machine learning, and scalable EKS-based infrastructure. It streamlines patient flow—from triage to forecasting—while dynamically adapting to clinical demand, ensuring smooth, efficient, and cloud-ready care delivery.
+## 🔐 User Roles
+
+The frontend adapts based on user role:
+
+### Patient
+- View personal appointments
+- Upload and chat with AI Nurse
+- Use AI Health Tutor
+- Add comments to appointments
+
+### Doctor
+- All patient permissions
+- Create/update/delete appointments
+- View all appointments
+- Manage patient schedules
+
+### Receptionist
+- Create/update/delete appointments
+- Manage facility-wide scheduling
+- Administrative oversight
+
+---
+
+## 🎯 Development Tips
+
+### Adding New Components
+1. Create a `.tsx` file in `src/components/`
+2. Export a function component
+3. Use TypeScript for props
+4. Import and use in pages
+
+### Styling
+- Use Tailwind utility classes directly in JSX
+- Avoid custom CSS when possible
+- Follow existing component patterns
+- Maintain responsive design principles
+
+### Type Safety
+- Define component props interfaces
+- Type API response data
+- Use TypeScript strict mode
+- Leverage IDE autocomplete
+
+### API Integration
+- API base URL configured in environment
+- Authentication tokens handled via AuthContext
+- Error handling with user-friendly messages
+- Loading states for async operations
+
+---
+
+## 🌐 Environment Variables
+
+Create a `.env` file in the frontend directory:
+
+```env
+VITE_API_URL=http://localhost:8000
+```
+
+For production:
+```env
+VITE_API_URL=https://your-api-domain.com
+```
+
+---
+
+## 📱 Browser Support
+
+Works in all modern browsers supporting ES2020+:
+- Chrome 90+
+- Firefox 88+
+- Safari 14+
+- Edge 90+
+
+---
+
+## 🧪 Testing
+
+```bash
+# Run tests (when configured)
+npm run test
+
+# Run linter
+npm run lint
+```
+
+---
+
+## 📦 Dependencies
+
+### Core
+- `react` - UI library
+- `react-dom` - React DOM renderer
+- `react-router-dom` - Routing
+
+### UI & Styling
+- `tailwindcss` - Utility-first CSS
+- `lucide-react` - Icon library
+- `postcss` - CSS processing
+- `autoprefixer` - CSS vendor prefixing
+
+### Development
+- `vite` - Build tool
+- `typescript` - Type checking
+- `@types/react` - React type definitions
+- `@vitejs/plugin-react` - React plugin for Vite
+
+---
+
+## 🔄 Available Scripts
+
+```bash
+npm run dev       # Start development server
+npm run build     # Build for production
+npm run preview   # Preview production build
+npm run lint      # Run ESLint
+```
+
+---
+
+## 🚀 Deployment
+
+### Build
+```bash
+npm run build
+```
+
+### Deploy to AWS S3 + CloudFront
+See the [AWS deployment guide](../aws/README.md) for full instructions.
+
+### Deploy to Vercel/Netlify
+```bash
+# Build command
+npm run build
+
+# Output directory
+dist
+```
+
+---
+
+## 🤝 Contributing
+
+1. Follow the existing code structure
+2. Use TypeScript for all new code
+3. Maintain responsive design
+4. Test on multiple browsers
+5. Follow component composition patterns
+
+---
+
+## 📚 Additional Resources
+
+- [React Documentation](https://react.dev)
+- [TypeScript Documentation](https://www.typescriptlang.org/docs)
+- [Tailwind CSS Documentation](https://tailwindcss.com/docs)
+- [Vite Documentation](https://vitejs.dev)
+- [React Router Documentation](https://reactrouter.com)
+
+---
+
+Built with care for better healthcare.

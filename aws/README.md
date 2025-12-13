@@ -1,498 +1,606 @@
-# CareFlowAI AWS Deployment Files
+# CareFlowAI AWS Deployment
 
-This directory contains all necessary files for deploying CareFlowAI to AWS.
+Complete AWS infrastructure and deployment guide for the CareFlowAI healthcare management system. Deploy a production-ready, scalable, and highly available application on AWS.
 
-## Directory Structure
+---
+
+## 📋 Table of Contents
+
+- [Architecture Overview](#-architecture-overview)
+- [Directory Structure](#-directory-structure)
+- [Prerequisites](#-prerequisites)
+- [Deployment Options](#-deployment-options)
+- [AWS Services Used](#-aws-services-used)
+- [Quick Start](#-quick-start)
+- [Management Scripts](#-management-scripts)
+- [Common Operations](#-common-operations)
+- [Security Features](#-security-features)
+- [Monitoring](#-monitoring)
+- [Troubleshooting](#-troubleshooting)
+
+---
+
+## 🏗️ Architecture Overview
+
+### Production Architecture
+
+```
+Internet
+  ↓
+CloudFront (CDN) ← S3 (React Frontend)
+  ↓
+API Gateway (HTTP API)
+  ↓
+VPC Link
+  ↓
+Application Load Balancer
+  ↓
+Auto Scaling Group (1-3 EC2 t2.micro)
+  ├── EC2 Instance 1 (FastAPI Backend)
+  ├── EC2 Instance 2 (FastAPI Backend)
+  └── EC2 Instance 3 (FastAPI Backend)
+  ↓
+External Services
+  ├── MongoDB Atlas (Database)
+  └── Google Gemini AI (AI Services)
+```
+
+### Key Features
+
+- ✅ **Auto Scaling**: 1-3 t2.micro instances based on CPU/traffic
+- ✅ **Load Balancing**: Application Load Balancer with health checks
+- ✅ **API Management**: API Gateway with rate limiting and throttling
+- ✅ **CDN**: CloudFront for global content distribution
+- ✅ **Monitoring**: CloudWatch logs, metrics, and alarms
+- ✅ **High Availability**: Multi-AZ deployment
+- ✅ **Cost Optimized**: ~$35-52/month (adjustable)
+
+---
+
+## 📁 Directory Structure
 
 ```
 aws/
-├── cloudformation/          # CloudFormation YAML templates
-│   ├── vpc.yaml            # VPC and networking
-│   ├── security-groups.yaml # Security groups
-│   ├── ec2-backend.yaml    # EC2 instance for backend
-│   └── s3-cloudfront.yaml  # S3 bucket and CloudFront
+├── cloudformation/                  # Infrastructure as Code
+│   ├── vpc.yaml                    # VPC and networking (2 AZs)
+│   ├── security-groups.yaml        # Security groups for ALB and EC2
+│   ├── ec2-backend.yaml            # Single EC2 instance (simple setup)
+│   ├── s3-cloudfront.yaml          # S3 bucket and CloudFront distribution
+│   ├── alb.yaml                    # Application Load Balancer
+│   ├── asg.yaml                    # Auto Scaling Group (production)
+│   ├── api-gateway.yaml            # API Gateway with VPC Link
+│   └── cloudwatch.yaml             # Monitoring, logs, and alarms
 │
-├── scripts/                 # Deployment scripts
-│   ├── deploy-infrastructure.sh  # Deploy all AWS infrastructure
-│   ├── deploy-backend.sh         # Deploy FastAPI backend to EC2
-│   ├── deploy-frontend.sh        # Deploy React frontend to S3
-│   └── setup-nginx.sh            # Configure Nginx on EC2
+├── scripts/                         # Deployment automation
+│   ├── deploy-infrastructure.sh    # Deploy core infrastructure (VPC, ALB, ASG)
+│   ├── deploy-api-gateway.sh       # Deploy API Gateway
+│   ├── deploy-backend.sh           # Deploy backend to EC2
+│   ├── deploy-frontend.sh          # Build and deploy frontend to S3
+│   └── deploy-app.sh               # Deploy application to ASG instances
 │
-├── systemd/                 # Systemd service files
-│   ├── careflowai-backend.service  # Backend service
-│   └── careflowai-worker.service   # Celery worker (optional)
+├── check-resources.sh               # Check status of deployed resources
+├── cleanup-aws-resources.sh         # Delete all AWS resources
+├── startup-aws-resources.sh         # Start stopped EC2 instances
 │
-├── nginx/                   # Nginx configuration
-│   └── careflowai.conf     # Nginx reverse proxy config
-│
-├── .env.example                 # Environment variables template
-├── AWS_CLI_COMMANDS.md          # Useful AWS CLI commands
-├── startup-aws-resources.sh     # Start all AWS resources
-├── cleanup-aws-resources.sh     # Delete all AWS resources
-└── README.md                    # This file
+├── README.md                        # This file
+├── QuickStart.md                    # 15-minute quick start guide
+├── Deployment_architecture.md       # Detailed architecture diagrams
+├── Deployment_order_and_commands.md # Step-by-step deployment instructions
+└── Services_used_and_cost_comparison.md  # AWS services and cost breakdown
 ```
 
-## Quick Start
+---
 
-### Prerequisites
+## 🚀 Quick Links to Documentation
 
-1. AWS Account with appropriate permissions
-2. AWS CLI installed and configured
-3. EC2 Key Pair created
-4. MongoDB Atlas account (free M0 cluster)
+- **[QuickStart.md](./QuickStart.md)** - Get started in 15 minutes with minimal configuration
+- **[Deployment_architecture.md](./Deployment_architecture.md)** - Detailed architecture and design decisions
+- **[Deployment_order_and_commands.md](./Deployment_order_and_commands.md)** - Complete deployment walkthrough
+- **[Services_used_and_cost_comparison.md](./Services_used_and_cost_comparison.md)** - AWS services list and cost analysis
 
-### Step 1: Configure Deployment Scripts
+---
 
-Edit `scripts/deploy-infrastructure.sh`:
+## 📋 Prerequisites
+
+### 1. AWS Account Setup
+- Active AWS account with administrator access
+- Billing alerts configured (recommended)
+- Default VPC deleted (optional, for clean setup)
+
+### 2. AWS CLI Installation & Configuration
 ```bash
-KEY_NAME="your-ec2-key-pair-name"
-INSTANCE_TYPE="t2.micro"  # or t3.small, t3.medium
-REGION="us-east-1"
+# Install AWS CLI v2
+# Windows: Download from https://aws.amazon.com/cli/
+# macOS: brew install awscli
+# Linux: curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+
+# Configure credentials
+aws configure
+# Enter:
+#   - AWS Access Key ID
+#   - AWS Secret Access Key
+#   - Default region (e.g., us-east-1)
+#   - Default output format (json)
+
+# Verify installation
+aws sts get-caller-identity
 ```
 
-### Step 2: Deploy Infrastructure
+### 3. EC2 Key Pair
+```bash
+# Create a new key pair
+aws ec2 create-key-pair \
+  --key-name CareFlowAI-Key \
+  --query 'KeyMaterial' \
+  --output text > CareFlowAI-Key.pem
+
+# Set permissions (macOS/Linux)
+chmod 400 CareFlowAI-Key.pem
+
+# Windows: Right-click > Properties > Security > Advanced
+```
+
+### 4. External Services
+- **MongoDB Atlas**: Connection string for database
+  - Free tier available at https://www.mongodb.com/cloud/atlas
+  - Set up database user and whitelist AWS IP ranges
+- **Google Gemini API**: API key for AI services
+  - Get key from https://makersuite.google.com/app/apikey
+
+---
+
+## 🎯 Deployment Options
+
+### Option 1: Quick Deploy (Testing/Development)
+
+Deploy single EC2 instance without auto-scaling.
 
 ```bash
 cd aws/scripts
-chmod +x deploy-infrastructure.sh
-./deploy-infrastructure.sh
+
+# Deploy infrastructure
+bash deploy-infrastructure.sh
+
+# Deploy backend to EC2
+bash deploy-backend.sh
+
+# Deploy frontend to S3/CloudFront
+bash deploy-frontend.sh
 ```
 
-This will create:
-- VPC with public subnets
-- Security groups
-- EC2 instance (t2.micro by default)
-- Elastic IP
-- S3 bucket for frontend
-- CloudFront distribution
+**Time**: ~20 minutes
+**Cost**: ~$10-15/month
+**Recommended for**: Testing, development, demos
 
-### Step 3: Setup MongoDB Atlas
+### Option 2: Full Production Deploy
 
-1. Create MongoDB Atlas account at https://www.mongodb.com/cloud/atlas
-2. Create M0 (free) cluster
-3. Create database user
-4. Whitelist EC2 Elastic IP
-5. Get connection string
+Deploy with auto-scaling, load balancing, and API Gateway.
 
-### Step 4: Deploy Backend
-
-Edit `scripts/deploy-backend.sh`:
 ```bash
-EC2_IP="your-elastic-ip"
-KEY_FILE="path/to/your-key.pem"
-MONGODB_URL="your-mongodb-connection-string"
-SECRET_KEY="generate-with-openssl-rand-hex-32"
+cd aws/scripts
+
+# 1. Deploy core infrastructure (VPC, Security Groups, ALB, ASG)
+bash deploy-infrastructure.sh
+
+# 2. Deploy API Gateway
+bash deploy-api-gateway.sh
+
+# 3. Deploy backend to all ASG instances
+bash deploy-app.sh
+
+# 4. Deploy frontend to S3/CloudFront
+bash deploy-frontend.sh
 ```
 
-Deploy:
+**Time**: ~30-40 minutes
+**Cost**: ~$35-52/month
+**Recommended for**: Production, high availability
+
+### Option 3: Manual CloudFormation Deploy
+
+Use AWS Console to deploy CloudFormation templates individually.
+
+1. VPC and Networking: `cloudformation/vpc.yaml`
+2. Security Groups: `cloudformation/security-groups.yaml`
+3. Application Load Balancer: `cloudformation/alb.yaml`
+4. Auto Scaling Group: `cloudformation/asg.yaml`
+5. API Gateway: `cloudformation/api-gateway.yaml`
+6. S3 and CloudFront: `cloudformation/s3-cloudfront.yaml`
+7. CloudWatch: `cloudformation/cloudwatch.yaml`
+
+---
+
+## 💰 AWS Services Used
+
+| Service | Purpose | Monthly Cost (Estimate) |
+|---------|---------|-------------------------|
+| **EC2 (t2.micro)** | Backend hosting (1-3 instances) | $8.50 - $25.50 |
+| **Application Load Balancer** | Load balancing and health checks | $16.20 |
+| **API Gateway** | API management and rate limiting | $1.00 - $3.00 |
+| **CloudFront** | Global CDN for frontend | $1.00 |
+| **S3** | Frontend static file hosting | $0.50 |
+| **CloudWatch** | Logs, metrics, and alarms | $3.00 |
+| **VPC** | Virtual Private Cloud | $0.00 (free) |
+| **NAT Gateway** | Outbound internet for private subnets | $32.40 (optional) |
+| **VPC Link** | API Gateway to VPC connection | $0.00 |
+| **Auto Scaling** | Automatic instance scaling | $0.00 |
+| **Elastic IP** | Static IP for EC2 (single instance) | $0.00 (when attached) |
+| **Data Transfer** | Outbound data transfer | ~$1-5 |
+| **Total (without NAT)** | | **~$35-52/month** |
+| **Total (with NAT)** | | **~$67-84/month** |
+
+### Cost Optimization Tips
+- Use t2.micro free tier (12 months for new accounts)
+- Stop instances during off-hours for development
+- Use CloudFront caching to reduce data transfer
+- Monitor usage with Cost Explorer
+- Set up billing alarms
+
+---
+
+## ⚙️ Quick Start
+
+For detailed quick start guide, see [QuickStart.md](./QuickStart.md).
+
+### 1. Clone and Navigate
 ```bash
-chmod +x deploy-backend.sh
-./deploy-backend.sh
+git clone <repository-url>
+cd CareFlowAI/aws
 ```
 
-### Step 5: Setup Nginx (Optional but Recommended)
-
-SSH into EC2:
+### 2. Configure Environment
 ```bash
-ssh -i your-key.pem ubuntu@<elastic-ip>
+# Update scripts with your values
+# - EC2 Key Pair name
+# - MongoDB connection string
+# - Google Gemini API key
+# - AWS region
 ```
 
-Run setup script:
+### 3. Deploy
 ```bash
-# Copy nginx config
-sudo cp /opt/careflowai/aws/nginx/careflowai.conf /etc/nginx/sites-available/
-sudo ln -s /etc/nginx/sites-available/careflowai.conf /etc/nginx/sites-enabled/
-sudo rm /etc/nginx/sites-enabled/default
-sudo nginx -t
-sudo systemctl restart nginx
+cd scripts
+bash deploy-infrastructure.sh
+bash deploy-frontend.sh
 ```
 
-Or use the automated script:
+### 4. Access Application
 ```bash
-cd /opt/careflowai/aws/scripts
-chmod +x setup-nginx.sh
-./setup-nginx.sh
+# Get CloudFront URL
+aws cloudfront list-distributions \
+  --query 'DistributionList.Items[?Comment==`CareFlowAI Frontend`].DomainName' \
+  --output text
+
+# Get ALB URL
+aws elbv2 describe-load-balancers \
+  --names CareFlowAI-ALB \
+  --query 'LoadBalancers[0].DNSName' \
+  --output text
 ```
 
-### Step 6: Deploy Frontend
+---
 
-Edit `scripts/deploy-frontend.sh`:
+## 🔧 Management Scripts
+
+### Check Resource Status
 ```bash
-S3_BUCKET="your-s3-bucket-name"
-CLOUDFRONT_DISTRIBUTION_ID="your-distribution-id"
-API_URL="http://your-elastic-ip"
+bash check-resources.sh
 ```
 
-Deploy:
+Shows status of:
+- VPC and subnets
+- EC2 instances
+- Load balancers
+- Auto Scaling Groups
+- CloudFront distributions
+- S3 buckets
+
+### Start Stopped Resources
 ```bash
-chmod +x deploy-frontend.sh
-./deploy-frontend.sh
+bash startup-aws-resources.sh
 ```
 
-## Architecture Components
+Starts all stopped EC2 instances.
 
-### Backend (EC2)
-- **Instance Type:** t2.micro (free tier) / t3.small / t3.medium
-- **OS:** Ubuntu 22.04 LTS
-- **Storage:** 30 GB EBS
-- **Services:** FastAPI, Uvicorn, Nginx
-
-### Frontend (S3 + CloudFront)
-- **S3:** Static website hosting
-- **CloudFront:** Global CDN with HTTPS
-- **Framework:** React with Vite
-
-### Database (MongoDB Atlas)
-- **Tier:** M0 (free forever)
-- **Storage:** 512 MB
-- **Features:** Automatic backups, encryption
-
-### Networking
-- **VPC:** Custom VPC with public subnets
-- **Security Groups:** Configured for HTTP, HTTPS, SSH
-- **Elastic IP:** Static IP address for backend
-
-## CloudFormation Templates
-
-### vpc.yaml
-Creates VPC, Internet Gateway, Public Subnets, and Route Tables.
-
-**Outputs:**
-- VPC ID
-- Public Subnet IDs
-
-### security-groups.yaml
-Creates security groups for EC2 backend.
-
-**Parameters:**
-- VPC ID
-
-**Outputs:**
-- Backend Security Group ID
-
-### ec2-backend.yaml
-Creates EC2 instance, IAM role, and Elastic IP.
-
-**Parameters:**
-- Instance Type (t2.micro, t3.small, t3.medium)
-- Key Pair Name
-- VPC ID
-- Subnet ID
-- Security Group ID
-
-**Outputs:**
-- Instance ID
-- Elastic IP
-- Public DNS Name
-
-### s3-cloudfront.yaml
-Creates S3 bucket and CloudFront distribution.
-
-**Outputs:**
-- S3 Bucket Name
-- S3 Website URL
-- CloudFront Distribution ID
-- CloudFront Domain Name
-
-## Deployment Scripts
-
-### deploy-infrastructure.sh
-Deploys all CloudFormation stacks in correct order:
-1. VPC
-2. Security Groups
-3. EC2 Backend
-4. S3 + CloudFront
-
-**Configuration:**
-- Set `KEY_NAME` before running
-- Set `INSTANCE_TYPE` (default: t2.micro)
-- Set `REGION` (default: us-east-1)
-
-### deploy-backend.sh
-Deploys FastAPI application to EC2:
-1. Clones repository
-2. Sets up Python virtual environment
-3. Installs dependencies
-4. Creates .env file
-5. Sets up systemd service
-6. Starts backend
-
-**Configuration:**
-- EC2_IP: Your Elastic IP
-- KEY_FILE: Path to .pem key
-- MONGODB_URL: MongoDB Atlas connection string
-- SECRET_KEY: JWT secret key
-
-### deploy-frontend.sh
-Builds and deploys React frontend to S3:
-1. Creates production .env file
-2. Installs dependencies
-3. Builds production bundle
-4. Uploads to S3
-5. Invalidates CloudFront cache
-
-**Configuration:**
-- S3_BUCKET: Your S3 bucket name
-- CLOUDFRONT_DISTRIBUTION_ID: Your CloudFront ID
-- API_URL: Backend API URL
-
-### setup-nginx.sh
-Configures Nginx as reverse proxy:
-1. Installs Nginx
-2. Creates configuration
-3. Enables site
-4. Restarts Nginx
-
-## Systemd Services
-
-### careflowai-backend.service
-Runs FastAPI application as system service:
-- Auto-starts on boot
-- Restarts on failure
-- Logs to systemd journal
-
-**Usage:**
+### Delete All Resources
 ```bash
-sudo systemctl status careflowai-backend
-sudo systemctl restart careflowai-backend
-sudo systemctl stop careflowai-backend
-sudo journalctl -u careflowai-backend -f
+bash cleanup-aws-resources.sh
 ```
 
-### careflowai-worker.service (Optional)
-Runs Celery worker for background AI processing:
-- Used with self-hosted AI (Architecture 3A)
-- Requires Redis
+**Warning**: This deletes all CareFlowAI resources. Use with caution!
 
-**Usage:**
+Deletes in order:
+1. CloudWatch alarms
+2. API Gateway
+3. Auto Scaling Group
+4. Load Balancer
+5. Target Groups
+6. EC2 instances
+7. CloudFront distributions
+8. S3 buckets
+9. Security Groups
+10. VPC and networking
+
+---
+
+## 🛠️ Common Operations
+
+### Update Backend Code
+
+**Option 1: SSH into EC2**
 ```bash
-sudo systemctl status careflowai-worker
-sudo systemctl restart careflowai-worker
-sudo journalctl -u careflowai-worker -f
-```
+# Connect to EC2
+ssh -i CareFlowAI-Key.pem ubuntu@<ec2-public-ip>
 
-## Environment Variables
-
-Copy `.env.example` to `.env` and fill in:
-
-```bash
-# MongoDB
-MONGODB_URL=mongodb+srv://...
-DATABASE_NAME=careflowai
-
-# JWT
-SECRET_KEY=your-secret-key
-ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=30
-
-# Uploads
-UPLOAD_DIR=/opt/careflowai/backend/uploads
-MAX_UPLOAD_SIZE=10485760
-
-# Gemini API (optional)
-GEMINI_API_KEY=your-api-key
-```
-
-## Updating the Application
-
-### Update Backend
-```bash
-ssh -i your-key.pem ubuntu@<elastic-ip>
+# Update code
 cd /opt/careflowai
 git pull origin main
-cd backend
-source venv/bin/activate
-pip install -r requirements.txt
-sudo systemctl restart careflowai-backend
-```
-
-### Update Frontend
-```bash
-cd aws/scripts
-./deploy-frontend.sh
-```
-
-## Monitoring
-
-### Check Backend Status
-```bash
-# Via systemd
-sudo systemctl status careflowai-backend
-
-# Via Nginx
-curl http://<elastic-ip>/health
-
-# Via logs
-sudo journalctl -u careflowai-backend -f
-```
-
-### Check Frontend Status
-```bash
-# S3 website
-curl http://<bucket-name>.s3-website-<region>.amazonaws.com
-
-# CloudFront
-curl https://<cloudfront-domain>
-```
-
-## Troubleshooting
-
-### Backend not responding
-```bash
-# Check service status
-sudo systemctl status careflowai-backend
-
-# Check logs
-sudo journalctl -u careflowai-backend -n 100
-
-# Check if port is listening
-sudo netstat -tlnp | grep 8000
 
 # Restart service
 sudo systemctl restart careflowai-backend
+
+# Check status
+sudo systemctl status careflowai-backend
 ```
 
-### Frontend not loading
+**Option 2: Redeploy**
 ```bash
-# Check S3 bucket policy
-aws s3api get-bucket-policy --bucket <bucket-name>
+cd aws/scripts
+bash deploy-app.sh
+```
 
-# Check CloudFront status
+### Update Frontend
+
+```bash
+cd aws/scripts
+bash deploy-frontend.sh
+
+# Invalidate CloudFront cache (if needed)
+aws cloudfront create-invalidation \
+  --distribution-id <distribution-id> \
+  --paths "/*"
+```
+
+### View Backend Logs
+
+```bash
+# SSH into EC2
+ssh -i CareFlowAI-Key.pem ubuntu@<ec2-public-ip>
+
+# View logs (follow)
+sudo journalctl -u careflowai-backend -f
+
+# View last 100 lines
+sudo journalctl -u careflowai-backend -n 100
+
+# View logs with errors
+sudo journalctl -u careflowai-backend -p err
+```
+
+### Scale Instances
+
+```bash
+# Set desired capacity (1-3 instances)
+aws autoscaling set-desired-capacity \
+  --auto-scaling-group-name CareFlowAI-Backend-ASG \
+  --desired-capacity 3
+
+# Update min/max capacity
+aws autoscaling update-auto-scaling-group \
+  --auto-scaling-group-name CareFlowAI-Backend-ASG \
+  --min-size 2 \
+  --max-size 5
+```
+
+### Check Health Status
+
+```bash
+# ALB target health
+aws elbv2 describe-target-health \
+  --target-group-arn <target-group-arn>
+
+# Auto Scaling Group health
+aws autoscaling describe-auto-scaling-groups \
+  --auto-scaling-group-names CareFlowAI-Backend-ASG \
+  --query 'AutoScalingGroups[0].Instances[*].[InstanceId,HealthStatus,LifecycleState]' \
+  --output table
+```
+
+---
+
+## 🔒 Security Features
+
+### Network Security
+- ✅ **VPC Isolation**: Private and public subnets across 2 Availability Zones
+- ✅ **Security Groups**: Restrictive inbound/outbound rules
+- ✅ **ALB Security**: Only HTTPS (443) and HTTP (80) exposed
+- ✅ **EC2 Security**: Only accessible via ALB, SSH from specific IP
+
+### Application Security
+- ✅ **HTTPS**: CloudFront SSL/TLS certificate
+- ✅ **JWT Authentication**: Secure token-based auth
+- ✅ **CORS**: Configured origins
+- ✅ **Encrypted Storage**: EBS volumes encrypted at rest
+- ✅ **IAM Roles**: EC2 instance roles for AWS service access
+
+### Access Control
+- ✅ **SSH Key Pair**: Secure EC2 access
+- ✅ **API Rate Limiting**: API Gateway throttling
+- ✅ **CloudWatch Alarms**: Security event notifications
+
+---
+
+## 📊 Monitoring
+
+### CloudWatch Dashboards
+
+Automatic monitoring for:
+- CPU Utilization
+- Memory Usage
+- Network In/Out
+- Request Count
+- Response Time
+- Error Rate
+- Disk Usage
+
+### CloudWatch Alarms
+
+Email alerts for:
+- High CPU (>80%)
+- High memory usage (>80%)
+- High error rate (>5%)
+- Low healthy host count
+- Disk space low (<20%)
+
+### Log Groups
+
+- `/aws/ec2/careflowai/backend` - Application logs
+- `/aws/lambda/careflowai` - Lambda function logs (if used)
+- `/aws/apigateway/careflowai` - API Gateway logs
+
+### Viewing Metrics
+
+```bash
+# CPU utilization (last hour)
+aws cloudwatch get-metric-statistics \
+  --namespace AWS/EC2 \
+  --metric-name CPUUtilization \
+  --dimensions Name=AutoScalingGroupName,Value=CareFlowAI-Backend-ASG \
+  --start-time $(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%S) \
+  --end-time $(date -u +%Y-%m-%dT%H:%M:%S) \
+  --period 300 \
+  --statistics Average
+
+# Request count (last hour)
+aws cloudwatch get-metric-statistics \
+  --namespace AWS/ApplicationELB \
+  --metric-name RequestCount \
+  --dimensions Name=LoadBalancer,Value=<load-balancer-id> \
+  --start-time $(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%S) \
+  --end-time $(date -u +%Y-%m-%dT%H:%M:%S) \
+  --period 300 \
+  --statistics Sum
+```
+
+---
+
+## 🆘 Troubleshooting
+
+### Backend Not Responding
+
+```bash
+# Check EC2 instance status
+aws ec2 describe-instance-status --instance-ids <instance-id>
+
+# SSH and check service
+ssh -i CareFlowAI-Key.pem ubuntu@<ec2-ip>
+sudo systemctl status careflowai-backend
+
+# Restart service
+sudo systemctl restart careflowai-backend
+
+# Check logs
+sudo journalctl -u careflowai-backend -n 100 --no-pager
+```
+
+### Frontend Not Loading
+
+```bash
+# Check CloudFront distribution status
 aws cloudfront get-distribution --id <distribution-id>
 
-# Invalidate CloudFront cache
-aws cloudfront create-invalidation --distribution-id <id> --paths "/*"
+# Invalidate cache
+aws cloudfront create-invalidation \
+  --distribution-id <distribution-id> \
+  --paths "/*"
+
+# Check S3 bucket
+aws s3 ls s3://careflowai-frontend/
 ```
 
-### Database connection issues
-```bash
-# Test MongoDB connection
-python3 -c "from pymongo import MongoClient; client = MongoClient('your-connection-string'); print(client.server_info())"
-
-# Check if IP is whitelisted in MongoDB Atlas
-# Add EC2 Elastic IP to MongoDB Atlas Network Access
-```
-
-## Cost Estimates
-
-### Free Tier (First 12 Months)
-- EC2 t2.micro: $0 (750 hours/month)
-- EBS 30GB: $0
-- S3 + CloudFront: $0 (within limits)
-- MongoDB Atlas M0: $0 (forever)
-- **Total: $0-1/month**
-
-### After Free Tier
-- EC2 t2.micro: $8-10/month
-- EBS 30GB: $3/month
-- S3 + CloudFront: $1-5/month
-- MongoDB Atlas M0: $0
-- **Total: $12-20/month**
-
-## Security Best Practices
-
-1. **EC2 Security Group:**
-   - Restrict SSH (port 22) to your IP only
-   - Allow HTTP (80) and HTTPS (443) from anywhere
-   - Remove port 8000 after Nginx setup
-
-2. **Environment Variables:**
-   - Never commit .env files to git
-   - Use strong SECRET_KEY (generated with openssl rand -hex 32)
-   - Rotate secrets regularly
-
-3. **MongoDB Atlas:**
-   - Use strong passwords
-   - Whitelist only EC2 Elastic IP
-   - Enable connection encryption
-
-4. **S3 Bucket:**
-   - Allow only public read access
-   - Use CloudFront for HTTPS
-
-5. **Regular Updates:**
-   ```bash
-   sudo apt update && sudo apt upgrade -y
-   sudo systemctl restart careflowai-backend
-   ```
-
-## Resource Management
-
-### Start All Resources (Automated)
-
-To start all stopped AWS resources with one command:
+### Auto Scaling Not Working
 
 ```bash
-bash aws/startup-aws-resources.sh
+# Check scaling activities
+aws autoscaling describe-scaling-activities \
+  --auto-scaling-group-name CareFlowAI-Backend-ASG \
+  --max-records 10
+
+# Check scaling policies
+aws autoscaling describe-policies \
+  --auto-scaling-group-name CareFlowAI-Backend-ASG
 ```
 
-This script will:
-- Start DocumentDB cluster instances
-- Start EC2 backend instances
-- Scale up EKS node groups (if applicable)
-- Verify service health
-- Display resource summary with URLs and endpoints
-
-### Stop Resources (Cost Savings)
-
-To save costs when not using the application:
+### ALB Health Checks Failing
 
 ```bash
-# Stop EC2 instances
-INSTANCE_ID=$(aws cloudformation describe-stacks \
-    --stack-name CareFlowAI-Backend \
-    --query 'Stacks[0].Outputs[?OutputKey==`InstanceId`].OutputValue' \
-    --output text)
-aws ec2 stop-instances --instance-ids $INSTANCE_ID
+# Check target health
+aws elbv2 describe-target-health \
+  --target-group-arn <target-group-arn>
 
-# Stop DocumentDB cluster (if using DocumentDB instead of MongoDB Atlas)
-aws docdb stop-db-cluster --db-cluster-identifier careflowai-mongodb
+# SSH to instance and test health endpoint
+curl http://localhost:8000/health
+
+# Check security group rules
+aws ec2 describe-security-groups \
+  --group-ids <security-group-id>
 ```
 
-### Resource Cleanup (Delete Everything)
-
-To delete all AWS resources (automated):
+### High Costs
 
 ```bash
-bash aws/cleanup-aws-resources.sh
+# Check Cost Explorer
+aws ce get-cost-and-usage \
+  --time-period Start=2025-12-01,End=2025-12-12 \
+  --granularity MONTHLY \
+  --metrics BlendedCost
+
+# Check running instances
+aws ec2 describe-instances \
+  --filters "Name=instance-state-name,Values=running" \
+  --query 'Reservations[*].Instances[*].[InstanceId,InstanceType,LaunchTime]' \
+  --output table
+
+# Stop unused instances
+aws ec2 stop-instances --instance-ids <instance-id>
 ```
 
-Or manually delete CloudFormation stacks:
+---
 
-```bash
-# Delete CloudFormation stacks (in reverse order)
-aws cloudformation delete-stack --stack-name CareFlowAI-Frontend
-aws cloudformation delete-stack --stack-name CareFlowAI-Backend
-aws cloudformation delete-stack --stack-name CareFlowAI-SecurityGroups
-aws cloudformation delete-stack --stack-name CareFlowAI-VPC
+## 📚 Additional Resources
 
-# Empty and delete S3 bucket
-aws s3 rm s3://<bucket-name> --recursive
-aws s3 rb s3://<bucket-name>
-```
+### AWS Documentation
+- [CloudFormation User Guide](https://docs.aws.amazon.com/cloudformation/)
+- [EC2 User Guide](https://docs.aws.amazon.com/ec2/)
+- [Auto Scaling User Guide](https://docs.aws.amazon.com/autoscaling/)
+- [ALB User Guide](https://docs.aws.amazon.com/elasticloadbalancing/)
+- [API Gateway Developer Guide](https://docs.aws.amazon.com/apigateway/)
+- [CloudFront Developer Guide](https://docs.aws.amazon.com/cloudfront/)
+- [CloudWatch User Guide](https://docs.aws.amazon.com/cloudwatch/)
 
-## Documentation
+### CareFlowAI Documentation
+- [Backend README](../backend/README.md) - Backend API documentation
+- [Frontend README](../frontend/README.md) - Frontend setup and development
+- [Root README](../README.md) - Project overview and features
 
-All AWS documentation has been consolidated into two main files:
+---
 
-- **📖 [../DEPLOY.md](../DEPLOY.md)** - Complete deployment guide
-- **📖 [../REFERENCE.md](../REFERENCE.md)** - All commands and troubleshooting
+## 📞 Support
 
-## Support
+1. **Check Documentation**: Review the documentation files in this directory
+2. **CloudWatch Logs**: Check application and system logs
+3. **CloudFormation Events**: Review stack events for deployment issues
+4. **AWS Support**: Contact AWS Support for infrastructure issues
+5. **GitHub Issues**: Report bugs and feature requests
 
-For issues or questions:
-1. Check [../REFERENCE.md](../REFERENCE.md) for commands and troubleshooting
-2. Review CloudFormation stack events
-3. Check systemd service logs
-4. Refer to [../AWS_ARCHITECTURE_GUIDE.md](../AWS_ARCHITECTURE_GUIDE.md) for architecture details
+---
 
-## Next Steps
+**Ready to deploy?** Start with [QuickStart.md](./QuickStart.md)!
 
-1. Setup MongoDB Atlas and get connection string
-2. Run infrastructure deployment script
-3. Deploy backend application
-4. Deploy frontend application
-5. Configure custom domain (optional)
-6. Setup SSL/TLS certificate (optional)
-7. Configure monitoring and alerts (optional)
-8. Implement CI/CD pipeline (optional)
+**Need detailed steps?** See [Deployment_order_and_commands.md](./Deployment_order_and_commands.md)
+
+**Architecture questions?** Read [Deployment_architecture.md](./Deployment_architecture.md)
+
+---
+
+Built with care for better healthcare.
